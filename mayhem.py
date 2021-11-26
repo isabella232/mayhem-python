@@ -25,6 +25,11 @@ import pygame
 from pygame.locals import *
 from pygame import gfxdraw
 
+try:
+    import cPickle as pickle
+except ImportError:
+    import pickle
+
 # -------------------------------------------------------------------------------------------------
 
 DEBUG_SCREEN = True # print debug info on the screen
@@ -308,7 +313,7 @@ class Game(object):
 
 class Sequence(object):
     
-    def __init__(self, screen_width, screen_height, motion):
+    def __init__(self, screen_width, screen_height, motion, record_play=False, play_recorded=False):
 
         self.myfont = pygame.font.SysFont('Arial', 20)
 
@@ -318,6 +323,16 @@ class Sequence(object):
 
         # basic, thrust, gravity
         self.motion = motion
+
+        # record / play recorded
+        self.record_play = record_play
+        self.played_data = [] # [(0,0,0), (0,0,1), ...] (left, right, thrust)
+
+        self.play_recorded = play_recorded
+
+        if self.play_recorded:
+            with open("played.dat", "rb") as f:
+                self.played_data = pickle.load(f)
 
         #init  motion
         self.ship_controls = {}
@@ -329,6 +344,7 @@ class Sequence(object):
 
         # FPS
         self.clock = pygame.time.Clock()
+        self.frames = 0
 
     def main_loop(self):
 
@@ -347,7 +363,49 @@ class Sequence(object):
             self.ship_1.sound_explod.play()
 
             nb_dead += 1
-            #time.sleep(0.1)
+
+            # record play ?
+            if self.record_play:
+                with open("played.dat", "wb") as f:
+                    pickle.dump(self.played_data, f, protocol=pickle.HIGHEST_PROTOCOL)
+                time.sleep(0.1)
+                print("Frames=", self.frames)
+                print("%s seconds" % int(self.frames/MAX_FPS))
+                sys.exit(0)
+
+    def play_recorded_data(self):
+
+        # exit ?
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                sys.exit(0)
+
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    sys.exit(0)
+
+        try:
+            data_i = self.played_data[self.frames]
+
+            if data_i[0]:
+                self.ship_controls["LEFT"] = True
+            else:
+                self.ship_controls["LEFT"] = False
+
+            if data_i[1]:
+                self.ship_controls["RIGHT"] = True
+            else:
+                self.ship_controls["RIGHT"] = False
+
+            if data_i[2]:
+                self.ship_controls["THRUST"] = True
+            else:
+                self.ship_controls["THRUST"] = False
+        except:
+            print("End of playback")
+            print("Frames=", self.frames)
+            print("%s seconds" % int(self.frames/MAX_FPS))
+            sys.exit(0)
 
     def handle_events(self):
 
@@ -410,13 +468,20 @@ class Sequence(object):
             elif event.type == pygame.JOYHATMOTION:
                 print("Joystick JOYHATMOTION pressed.")
 
+        # record play ?
+        if self.record_play:
+            self.played_data.append((self.ship_controls["LEFT"], self.ship_controls["RIGHT"], self.ship_controls["THRUST"]))
+
     def run_loop(self):
 
         # Game Main Loop
         while not self.ship_1.explod:
 
             # pygame events
-            self.handle_events()
+            if not self.play_recorded:
+                self.handle_events()
+            else:
+                self.play_recorded_data()              
 
             # clear screen
             self.game.window.fill((0,0,0))
@@ -461,9 +526,15 @@ class Sequence(object):
                 ship_lives = self.myfont.render('Ship lives: %s' % (self.ship_1.lives,), False, (255, 255, 255))
                 self.game.window.blit(ship_lives, (DEBUG_TEXT_XPOS + 5, 105))
 
+                dt = self.myfont.render('Frames: %s' % (self.frames,), False, (255, 255, 255))
+                self.game.window.blit(dt, (DEBUG_TEXT_XPOS + 5, 130))
+
             # display
             pygame.display.flip()
             self.clock.tick(MAX_FPS) # https://python-forum.io/thread-16692.html
+
+            self.frames += 1
+
             #print(self.clock.get_fps())
 
 # -------------------------------------------------------------------------------------------------
@@ -490,6 +561,8 @@ def run():
     # options
     parser = argparse.ArgumentParser()
     parser.add_argument('-m', '--motion', help='How the ship moves', action="store", default='gravity', choices=("basic", "thrust", "gravity"))
+    parser.add_argument('-r', '--record_play', help='', action="store_true", default=False)
+    parser.add_argument('-pr', '--play_recorded', help='', action="store_true", default=False)
 
     result = parser.parse_args()
     args = dict(result._get_kwargs())
@@ -497,7 +570,7 @@ def run():
     print("Args", args)
 
     # env
-    seq = Sequence(WIDTH, HEIGHT, motion=args["motion"])
+    seq = Sequence(WIDTH, HEIGHT, motion=args["motion"], record_play=args["record_play"], play_recorded=args["play_recorded"])
     seq.main_loop()
 
 if __name__ == '__main__':
