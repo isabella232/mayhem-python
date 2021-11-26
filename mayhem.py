@@ -57,6 +57,7 @@ SHIP_THRUST_MAX = 0.32 / SLOW_DOWN_COEF
 SHIP_ANGLESTEP = 5
 SHIP_ANGLE_LAND = 30
 SHIP_MAX_LIVES = 100
+SHIP_SPRITE_SIZE = 32
 
 iG       = 0.07 / SLOW_DOWN_COEF
 iXfrott  = 0.984
@@ -79,6 +80,63 @@ PLATFORMS_1 = [ ( 464, 513, 333 ),
                 ( 434, 521, 835 ),
                 ( 499, 586, 1165 ),
                 ( 68, 145, 1181 ) ]
+
+# -------------------------------------------------------------------------------------------------
+
+class Sensors(object):
+
+    @staticmethod
+    def octo(surface, mask, xpos, ypos, vx, vy, fixed_radius=False):
+        WHITE = (255, 255, 255)
+        RED   = (255, 0, 0)
+
+        # Note: with an adaptative radius the ANN would need to also know vx and vy in adition to the 8 sensors values
+
+        if not fixed_radius:
+            radius = int(SHIP_SPRITE_SIZE * 1.5)
+            radius += 12 * math.sqrt( math.pow(vx, 2) + math.pow(vy, 2) )
+        else:
+            radius = int(SHIP_SPRITE_SIZE * 2)
+
+        # follow V vector or fixed in the grid ?
+        slx, sly  = (xpos + SHIP_SPRITE_SIZE/2) - radius, (ypos + SHIP_SPRITE_SIZE/2)
+        srx, sry  = (xpos + SHIP_SPRITE_SIZE/2) + radius, (ypos + SHIP_SPRITE_SIZE/2)
+        sux, suy  = (xpos + SHIP_SPRITE_SIZE/2), (ypos + SHIP_SPRITE_SIZE/2) - radius
+        sdx, sdy  = (xpos + SHIP_SPRITE_SIZE/2), (ypos + SHIP_SPRITE_SIZE/2) + radius
+
+        sulx, suly  = (xpos + SHIP_SPRITE_SIZE/2) - radius/1.4, (ypos + SHIP_SPRITE_SIZE/2) - radius/1.4
+        surx, sury  = (xpos + SHIP_SPRITE_SIZE/2) + radius/1.4, (ypos + SHIP_SPRITE_SIZE/2) - radius/1.4
+        sdlx, sdly  = (xpos + SHIP_SPRITE_SIZE/2) - radius/1.4, (ypos + SHIP_SPRITE_SIZE/2) + radius/1.4
+        sdrx, sdry  = (xpos + SHIP_SPRITE_SIZE/2) + radius/1.4, (ypos + SHIP_SPRITE_SIZE/2) + radius/1.4
+
+        # position for game.map for the collsion mask
+        sensors_pos = [(slx, sly), (srx, sry), (sux, suy), (sdx, sdy), \
+                       (sulx, suly), (surx, sury), (sdlx, sdly), (sdrx, sdry)]
+
+        colors = []
+
+        # collision
+        for s in sensors_pos:
+            try:
+                color = RED if mask.get_at((int(s[0]), int(s[1]))) else WHITE
+            # out of bound => no collision
+            except:
+                color = WHITE
+
+            colors.append(color)
+
+        # display the sensor (relocate the position for game.window)
+        sensors_pos = [(SHIP_SPRITE_SIZE/2 - radius, SHIP_SPRITE_SIZE/2), (SHIP_SPRITE_SIZE/2 + radius, SHIP_SPRITE_SIZE/2), (SHIP_SPRITE_SIZE/2, SHIP_SPRITE_SIZE/2 - radius), (SHIP_SPRITE_SIZE/2, SHIP_SPRITE_SIZE/2 + radius), \
+                       (SHIP_SPRITE_SIZE/2 - radius/1.4, SHIP_SPRITE_SIZE/2 - radius/1.4), (SHIP_SPRITE_SIZE/2 + radius/1.4, SHIP_SPRITE_SIZE/2 - radius/1.4), (SHIP_SPRITE_SIZE/2 - radius/1.4, SHIP_SPRITE_SIZE/2 + radius/1.4), (SHIP_SPRITE_SIZE/2 + radius/1.4, SHIP_SPRITE_SIZE/2 + radius/1.4)]
+
+        for i, s in enumerate(sensors_pos):
+            #gfxdraw.pixel(surface, int(VIEW_WIDTH/2) + VIEW_LEFT + int(s[0]) , int(VIEW_HEIGHT/2) + VIEW_TOP + int(s[1]), colors[i])
+            pygame.draw.circle(surface, colors[i], (int(VIEW_WIDTH/2) + VIEW_LEFT + int(s[0]) , int(VIEW_HEIGHT/2) + VIEW_TOP + int(s[1])), 2, width=0)
+
+    @staticmethod
+    def circle(surface, mask, xpos, ypos, vx, vy, fixed_radius = False):
+        WHITE = (255, 255, 255)
+        pygame.draw.circle(surface, WHITE, (int(VIEW_WIDTH/2) + VIEW_LEFT + SHIP_SPRITE_SIZE/2 , int(VIEW_HEIGHT/2) + VIEW_TOP + SHIP_SPRITE_SIZE/2), 80, width=1)
 
 # -------------------------------------------------------------------------------------------------
 
@@ -201,8 +259,10 @@ class Ship(object):
                 if ship_controls["RIGHT"]:
                     self.angle -= SHIP_ANGLESTEP
 
+                # 
                 self.angle = self.angle % 360
 
+                # https://gafferongames.com/post/integration_basics/
                 self.ax = self.thrust * -math.cos( math.radians(90 - self.angle) ) # ax = thrust * sin1
                 self.ay = iG + (self.thrust * -math.sin( math.radians(90 - self.angle))) # ay = g + thrust * (-cos1)
 
@@ -233,9 +293,9 @@ class Ship(object):
         self.image_rotated = pygame.transform.rotate(self.image, self.angle)
 
         rect = self.image_rotated.get_rect()
-        rot_xoffset = ((32 - rect.width)/2)
-        rot_yoffset = ((32 - rect.height)/2)
-
+        rot_xoffset = ((SHIP_SPRITE_SIZE - rect.width)/2)
+        rot_yoffset = ((SHIP_SPRITE_SIZE - rect.height)/2)
+        
         self.mask = pygame.mask.from_surface(self.image_rotated)
 
         return int(rot_xoffset), int(rot_yoffset)
@@ -243,9 +303,9 @@ class Ship(object):
     def is_landed(self):
 
         for plaform in PLATFORMS_1:
-            xmin  = plaform[0] - 9
-            xmax  = plaform[1] - 23
-            yflat = plaform[2] - 30
+            xmin  = plaform[0] - (SHIP_SPRITE_SIZE - 23)
+            xmax  = plaform[1] - (SHIP_SPRITE_SIZE - 9)
+            yflat = plaform[2] - (SHIP_SPRITE_SIZE - 2)
 
             #print(self.ypos, yflat)
 
@@ -274,9 +334,9 @@ class Ship(object):
         test_it = True
 
         for plaform in PLATFORMS_1:
-            xmin  = plaform[0] - 9
-            xmax  = plaform[1] - 23
-            yflat = plaform[2] - 30
+            xmin  = plaform[0] - (SHIP_SPRITE_SIZE - 23)
+            xmax  = plaform[1] - (SHIP_SPRITE_SIZE - 9)
+            yflat = plaform[2] - (SHIP_SPRITE_SIZE - 2)
 
             if ((xmin<=self.xpos) and (self.xpos<=xmax) and ((self.ypos==yflat) or ((self.ypos-1)==yflat) or ((self.ypos-2)==yflat) or ((self.ypos-3)==yflat))  and  (self.angle<=SHIP_ANGLE_LAND or self.angle>=(360-SHIP_ANGLE_LAND)) ):
                 test_it = False
@@ -305,6 +365,7 @@ class Game(object):
 
         # Background
         self.map = pygame.image.load( os.path.join("assets", "level1", "Mayhem_Level1_Map_256c.bmp") ).convert() # .convert_alpha()
+
         self.map.set_colorkey( (0, 0, 0) ) # used for the mask, black = background
         self.map_rect = self.map.get_rect()
         self.map_mask = pygame.mask.from_surface(self.map)
@@ -313,7 +374,7 @@ class Game(object):
 
 class Sequence(object):
     
-    def __init__(self, screen_width, screen_height, motion, record_play=False, play_recorded=False):
+    def __init__(self, screen_width, screen_height, motion="gravity", sensor="", record_play=False, play_recorded=False):
 
         self.myfont = pygame.font.SysFont('Arial', 20)
 
@@ -323,6 +384,7 @@ class Sequence(object):
 
         # basic, thrust, gravity
         self.motion = motion
+        self.sensor = sensor
 
         # record / play recorded
         self.record_play = record_play
@@ -496,7 +558,13 @@ class Sequence(object):
             # blit ship
             self.game.window.blit(self.ship_1.image_rotated, (VIEW_WIDTH/2 + VIEW_LEFT + rot_xoffset, VIEW_HEIGHT/2 + VIEW_TOP + rot_yoffset))
 
-            #gfxdraw.pixel(self.game.map, self.ship_1.xpos + 16, self.ship_1.ypos + 16, (255, 0,0))
+            # sensors
+            if self.sensor == "octo":
+                Sensors.octo(self.game.window, self.game.map_mask, self.ship_1.xpos, self.ship_1.ypos, self.ship_1.vx, self.ship_1.vy, fixed_radius=False)
+            if self.sensor == "octo_fixed":
+                Sensors.octo(self.game.window, self.game.map_mask, self.ship_1.xpos, self.ship_1.ypos, self.ship_1.vx, self.ship_1.vy, fixed_radius=True)
+            elif self.sensor == "circle":
+                Sensors.circle(self.game.window, self.game.map_mask, self.ship_1.xpos, self.ship_1.ypos, self.ship_1.vx, self.ship_1.vy)
 
             # collision
             collision_str = "No Test"
@@ -563,6 +631,7 @@ def run():
     parser.add_argument('-m', '--motion', help='How the ship moves', action="store", default='gravity', choices=("basic", "thrust", "gravity"))
     parser.add_argument('-r', '--record_play', help='', action="store_true", default=False)
     parser.add_argument('-pr', '--play_recorded', help='', action="store_true", default=False)
+    parser.add_argument('-s', '--sensor', help='', action="store", default="", choices=("octo", "octo_fixed", "circle", ""))
 
     result = parser.parse_args()
     args = dict(result._get_kwargs())
@@ -570,7 +639,7 @@ def run():
     print("Args", args)
 
     # env
-    seq = Sequence(WIDTH, HEIGHT, motion=args["motion"], record_play=args["record_play"], play_recorded=args["play_recorded"])
+    seq = Sequence(WIDTH, HEIGHT, motion=args["motion"], sensor=args["sensor"], record_play=args["record_play"], play_recorded=args["play_recorded"])
     seq.main_loop()
 
 if __name__ == '__main__':
