@@ -46,7 +46,20 @@ VIEW_WIDTH  = 600   # view width
 VIEW_HEIGHT = 400   # view height
 
 SHIP_X = 450        # ie left
-SHIP_Y = 700        # ie top
+SHIP_Y = 730        # ie top
+
+# -------------------------------------------------------------------------------------------------
+
+USE_MINI_MASK = True
+MAP_WIDTH = 792
+MAP_HEIGHT = 1200
+
+WHITE = (255, 255, 255)
+RED   = (255, 0, 0)
+LVIOLET  = (100, 0, 100)
+
+BEAM_RADIUS = 380
+BEAM_SURFACE = pygame.Surface((BEAM_RADIUS, BEAM_RADIUS))
 
 # -------------------------------------------------------------------------------------------------
 
@@ -86,10 +99,71 @@ PLATFORMS_1 = [ ( 464, 513, 333 ),
 class Sensors(object):
 
     @staticmethod
-    def octo(surface, mask, xpos, ypos, vx, vy, fixed_radius=False):
-        WHITE = (255, 255, 255)
-        RED   = (255, 0, 0)
+    def beam(window_surface, flipped_map_masks, xpos, ypos, vx, vy):
 
+        # TODO use smaller map masks
+        # TODO use only 0 to 90 degres beam mask quadran: https://github.com/Rabbid76/PyGameExamplesAndAnswers/blob/master/examples/minimal_examples/pygame_minimal_mask_intersect_surface_line_2.py
+
+        # in window coord, center of the player view
+        ship_window_pos = (int(VIEW_WIDTH/2) + VIEW_LEFT + SHIP_SPRITE_SIZE/2 , int(VIEW_HEIGHT/2) + VIEW_TOP + SHIP_SPRITE_SIZE/2)
+        #print("ship_window_pos", ship_window_pos)
+
+        beam_surface_center = (int(BEAM_RADIUS/2), int(BEAM_RADIUS/2))
+
+        # 30 degres step
+        for angle in range(0, 359, 30):
+
+            c = math.cos(math.radians(angle))
+            s = math.sin(math.radians(angle))
+
+            flip_x = c < 0
+            flip_y = s < 0
+
+            filpped_map_mask = flipped_map_masks[flip_x][flip_y]
+
+            # beam final point
+            x_dest = beam_surface_center[0] + BEAM_RADIUS * abs(c)
+            y_dest = beam_surface_center[1] + BEAM_RADIUS * abs(s)
+
+            BEAM_SURFACE.fill((0, 0, 0))
+            BEAM_SURFACE.set_colorkey((0, 0, 0))
+            pygame.draw.line(BEAM_SURFACE, WHITE, beam_surface_center, (x_dest, y_dest))
+            beam_mask = pygame.mask.from_surface(BEAM_SURFACE)
+            pygame.draw.circle(BEAM_SURFACE, RED, beam_surface_center, 3)
+
+            # offset = beam mask (left/top) coordinate in the map (ie where to put our lines mask in the map)
+            if flip_x:
+                offset_x = MAP_WIDTH - (xpos+SHIP_SPRITE_SIZE/2) - int(BEAM_RADIUS/2)
+            else:
+                offset_x = xpos+SHIP_SPRITE_SIZE/2 - int(BEAM_RADIUS/2)
+
+            if flip_y:
+                offset_y = MAP_HEIGHT - (ypos+SHIP_SPRITE_SIZE/2) - int(BEAM_RADIUS/2)
+            else:
+                offset_y = ypos+SHIP_SPRITE_SIZE/2 - int(BEAM_RADIUS/2)
+
+            #print("offset", offset_x, offset_y)
+            hit = filpped_map_mask.overlap(beam_mask, (int(offset_x), int(offset_y)))
+            #print("hit", hit)
+
+            if hit is not None and (hit[0] != xpos+SHIP_SPRITE_SIZE/2 or hit[1] != ypos+SHIP_SPRITE_SIZE/2):
+                hx = MAP_WIDTH-1 - hit[0] if flip_x else hit[0]
+                hy = MAP_HEIGHT-1 - hit[1] if flip_y else hit[1]
+                hit = (hx, hy)
+                #print("new hit", hit)
+
+                # go back to screen coordinates
+                dx_hit = hit[0] - (xpos+SHIP_SPRITE_SIZE/2)
+                dy_hit = hit[1] - (ypos+SHIP_SPRITE_SIZE/2)
+
+                pygame.draw.line(window_surface, LVIOLET, ship_window_pos, (ship_window_pos[0] + dx_hit, ship_window_pos[1] + dy_hit)) 
+                #pygame.draw.circle(map, RED, hit, 2)
+
+            #window_surface.blit(BEAM_SURFACE, (VIEW_LEFT + VIEW_WIDTH, VIEW_TOP))
+            #map.blit(BEAM_SURFACE, (int(offset_x), int(offset_y)))
+
+    @staticmethod
+    def octo(window_surface, map_mask, xpos, ypos, vx, vy, fixed_radius=False):
         # Note: with an adaptative radius the ANN would need to also know vx and vy in adition to the 8 sensors values
 
         if not fixed_radius:
@@ -118,7 +192,7 @@ class Sensors(object):
         # collision
         for s in sensors_pos:
             try:
-                color = RED if mask.get_at((int(s[0]), int(s[1]))) else WHITE
+                color = RED if map_mask.get_at((int(s[0]), int(s[1]))) else WHITE
             # out of bound => no collision
             except:
                 color = WHITE
@@ -131,12 +205,18 @@ class Sensors(object):
 
         for i, s in enumerate(sensors_pos):
             #gfxdraw.pixel(surface, int(VIEW_WIDTH/2) + VIEW_LEFT + int(s[0]) , int(VIEW_HEIGHT/2) + VIEW_TOP + int(s[1]), colors[i])
-            pygame.draw.circle(surface, colors[i], (int(VIEW_WIDTH/2) + VIEW_LEFT + int(s[0]) , int(VIEW_HEIGHT/2) + VIEW_TOP + int(s[1])), 2, width=0)
+            pygame.draw.circle(window_surface, colors[i], (int(VIEW_WIDTH/2) + VIEW_LEFT + int(s[0]) , int(VIEW_HEIGHT/2) + VIEW_TOP + int(s[1])), 2, width=0)
 
     @staticmethod
-    def circle(surface, mask, xpos, ypos, vx, vy, fixed_radius = False):
-        WHITE = (255, 255, 255)
-        pygame.draw.circle(surface, WHITE, (int(VIEW_WIDTH/2) + VIEW_LEFT + SHIP_SPRITE_SIZE/2 , int(VIEW_HEIGHT/2) + VIEW_TOP + SHIP_SPRITE_SIZE/2), 80, width=1)
+    def circle(window_surface, map_mask, xpos, ypos, vx, vy, fixed_radius = False):
+
+        if not fixed_radius:
+            radius = int(SHIP_SPRITE_SIZE * 1.5)
+            radius += 12 * math.sqrt( math.pow(vx, 2) + math.pow(vy, 2) )
+        else:
+            radius = int(SHIP_SPRITE_SIZE * 2)
+
+        pygame.draw.circle(window_surface, WHITE, (int(VIEW_WIDTH/2) + VIEW_LEFT + SHIP_SPRITE_SIZE/2 , int(VIEW_HEIGHT/2) + VIEW_TOP + SHIP_SPRITE_SIZE/2), radius, width=1)
 
 # -------------------------------------------------------------------------------------------------
 
@@ -367,8 +447,12 @@ class Game(object):
         self.map = pygame.image.load( os.path.join("assets", "level1", "Mayhem_Level1_Map_256c.bmp") ).convert() # .convert_alpha()
 
         self.map.set_colorkey( (0, 0, 0) ) # used for the mask, black = background
-        self.map_rect = self.map.get_rect()
+        #self.map_rect = self.map.get_rect()
         self.map_mask = pygame.mask.from_surface(self.map)
+        self.mask_map_fx = pygame.mask.from_surface(pygame.transform.flip(self.map, True, False))
+        self.mask_map_fy = pygame.mask.from_surface(pygame.transform.flip(self.map, False, True))
+        self.mask_map_fx_fy = pygame.mask.from_surface(pygame.transform.flip(self.map, True, True))
+        self.flipped_masks = [[self.map_mask, self.mask_map_fy], [self.mask_map_fx, self.mask_map_fx_fy]]
 
 # -------------------------------------------------------------------------------------------------
 
@@ -558,24 +642,45 @@ class Sequence(object):
             # blit ship
             self.game.window.blit(self.ship_1.image_rotated, (VIEW_WIDTH/2 + VIEW_LEFT + rot_xoffset, VIEW_HEIGHT/2 + VIEW_TOP + rot_yoffset))
 
+            # mini mask: mask the size of the ship, following the ship pos in the map
+            if USE_MINI_MASK:
+                mini_area = Rect(self.ship_1.xpos, self.ship_1.ypos, SHIP_SPRITE_SIZE, SHIP_SPRITE_SIZE)
+                mini_subsurface = self.game.map.subsurface(mini_area)
+                mini_subsurface.set_colorkey( (0, 0, 0) ) # used for the mask, black = background
+                mini_mask = pygame.mask.from_surface(mini_subsurface)
+
+                # collision
+                collision_str = "No Test"
+                if self.ship_1.do_test_collision():
+                    offset = (rot_xoffset, rot_yoffset) # pos of the ship
+
+                    if mini_mask.overlap(self.ship_1.mask, offset): # https://stackoverflow.com/questions/55817422/collision-between-masks-in-pygame/55818093#55818093
+                        collision_str = "BOOM"
+                        self.ship_1.explod = True
+                    else:
+                        collision_str = "OK"
+
+            else:
+                # collision
+                collision_str = "No Test"
+                if self.ship_1.do_test_collision():
+                    offset = (self.ship_1.xpos + rot_xoffset, self.ship_1.ypos + rot_yoffset) # pos of the ship
+
+                    if self.game.map_mask.overlap(self.ship_1.mask, offset): # https://stackoverflow.com/questions/55817422/collision-between-masks-in-pygame/55818093#55818093
+                        collision_str = "BOOM"
+                        self.ship_1.explod = True
+                    else:
+                        collision_str = "OK"
+
             # sensors
             if self.sensor == "octo":
                 Sensors.octo(self.game.window, self.game.map_mask, self.ship_1.xpos, self.ship_1.ypos, self.ship_1.vx, self.ship_1.vy, fixed_radius=False)
             if self.sensor == "octo_fixed":
                 Sensors.octo(self.game.window, self.game.map_mask, self.ship_1.xpos, self.ship_1.ypos, self.ship_1.vx, self.ship_1.vy, fixed_radius=True)
+            elif self.sensor == "beam":
+                Sensors.beam(self.game.window, self.game.flipped_masks, self.ship_1.xpos, self.ship_1.ypos, self.ship_1.vx, self.ship_1.vy)
             elif self.sensor == "circle":
                 Sensors.circle(self.game.window, self.game.map_mask, self.ship_1.xpos, self.ship_1.ypos, self.ship_1.vx, self.ship_1.vy)
-
-            # collision
-            collision_str = "No Test"
-            if self.ship_1.do_test_collision():
-                offset = (self.ship_1.xpos + rot_xoffset, self.ship_1.ypos + rot_yoffset) # pos of the ship
-
-                if self.game.map_mask.overlap(self.ship_1.mask, offset): # https://stackoverflow.com/questions/55817422/collision-between-masks-in-pygame/55818093#55818093
-                    collision_str = "BOOM"
-                    self.ship_1.explod = True
-                else:
-                    collision_str = "OK"
 
             # debug text
             if DEBUG_SCREEN:
@@ -597,12 +702,14 @@ class Sequence(object):
                 dt = self.myfont.render('Frames: %s' % (self.frames,), False, (255, 255, 255))
                 self.game.window.blit(dt, (DEBUG_TEXT_XPOS + 5, 130))
 
+                fps = self.myfont.render('FPS: %.2f' % self.clock.get_fps(), False, (255, 255, 255))
+                self.game.window.blit(fps, (DEBUG_TEXT_XPOS + 5, 155))
+
             # display
             pygame.display.flip()
             self.clock.tick(MAX_FPS) # https://python-forum.io/thread-16692.html
 
             self.frames += 1
-
             #print(self.clock.get_fps())
 
 # -------------------------------------------------------------------------------------------------
@@ -631,7 +738,7 @@ def run():
     parser.add_argument('-m', '--motion', help='How the ship moves', action="store", default='gravity', choices=("basic", "thrust", "gravity"))
     parser.add_argument('-r', '--record_play', help='', action="store_true", default=False)
     parser.add_argument('-pr', '--play_recorded', help='', action="store_true", default=False)
-    parser.add_argument('-s', '--sensor', help='', action="store", default="", choices=("octo", "octo_fixed", "circle", ""))
+    parser.add_argument('-s', '--sensor', help='', action="store", default="", choices=("octo", "octo_fixed", "beam", "circle", ""))
 
     result = parser.parse_args()
     args = dict(result._get_kwargs())
