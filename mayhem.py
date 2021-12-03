@@ -18,6 +18,17 @@ Anthony Prieur
 anthony.prieur@gmail.com
 """
 
+"""
+Usage example:
+
+python3 mayhem.py --sensor=beam --motion=gravity
+python3 mayhem.py --sensor=octo --motion=gravity
+python3 mayhem.py --sensor=beam --motion=thrust
+python3 mayhem.py --motion=thrust
+python3 mayhem.py -r=played1.dat --motion=gravity
+python3 mayhem.py -pr=played1.dat --motion=gravity
+"""
+
 import os, sys, argparse, random, math, time
 from random import randint
 
@@ -31,6 +42,7 @@ except ImportError:
     import pickle
 
 # -------------------------------------------------------------------------------------------------
+# General
 
 DEBUG_SCREEN = True # print debug info on the screen
 DEBUG_TEXT_XPOS = 0
@@ -42,28 +54,32 @@ HEIGHT  = 800       # window height
 VIEW_LEFT = 250     # X position in the window
 VIEW_TOP  = 150     # Y position in the window
 
-VIEW_WIDTH  = 600   # view width
-VIEW_HEIGHT = 400   # view height
+VIEW_WIDTH  = 650   # view width
+VIEW_HEIGHT = 430   # view height
 
 SHIP_X = 450        # ie left
 SHIP_Y = 730        # ie top
 
-# -------------------------------------------------------------------------------------------------
-
-USE_MINI_MASK = True
-MAP_WIDTH = 792
+MAP_WIDTH  = 792
 MAP_HEIGHT = 1200
 
-WHITE = (255, 255, 255)
-RED   = (255, 0, 0)
-LVIOLET  = (100, 0, 100)
+WHITE    = (255, 255, 255)
+RED      = (255, 0, 0)
+LVIOLET  = (128, 0, 128)
 
-BEAM_RADIUS = 380
+USE_MINI_MASK = True # mask the size of the ship (instead of the player view size)
+
+# -------------------------------------------------------------------------------------------------
+# Sensors
+
+BEAM_AMGLE_STEP = 30
+BEAM_RADIUS = 400
 BEAM_SURFACE = pygame.Surface((BEAM_RADIUS, BEAM_RADIUS))
 
 # -------------------------------------------------------------------------------------------------
+# SHIP dynamics
 
-SLOW_DOWN_COEF = 2.0 # somehow the C++ version is slower with the same physics coef ?
+SLOW_DOWN_COEF = 1.8 # somehow the C++ version is slower with the same physics coef ?
 
 SHIP_MASS = 0.9
 SHIP_THRUST_MAX = 0.32 / SLOW_DOWN_COEF
@@ -82,6 +98,9 @@ iCoeffvy = 0.6
 iCoeffimpact = 0.2
 
 # -------------------------------------------------------------------------------------------------
+# Levels / controls
+
+CURRENT_LEVEL = 1
 
 PLATFORMS_1 = [ ( 464, 513, 333 ),
                 ( 60, 127, 1045 ),
@@ -94,13 +113,28 @@ PLATFORMS_1 = [ ( 464, 513, 333 ),
                 ( 499, 586, 1165 ),
                 ( 68, 145, 1181 ) ]
 
+SHIP_1_KEYS = {"left":pygame.K_LEFT, "right":pygame.K_RIGHT, "up":pygame.K_UP, "down":pygame.K_DOWN, \
+               "thrust":pygame.K_KP_PERIOD, "shoot":pygame.K_KP_PERIOD, "shield":pygame.K_KP_PERIOD}
+SHIP_1_JOY = 0 # 0 means no joystick, =!0 means joystck number SHIP_1_JOY - 1
+
+# -------------------------------------------------------------------------------------------------
+# Assets
+
+MAP_1 = os.path.join("assets", "level1", "Mayhem_Level1_Map_256c.bmp")
+
+SOUND_THURST  = os.path.join("assets", "default", "sfx_loop_thrust.wav")
+SOUND_EXPLOD  = os.path.join("assets", "default", "sfx_boom.wav")
+SOUND_BOUNCE  = os.path.join("assets", "default", "sfx_rebound.wav")
+
+SHIP_1_PIC        = os.path.join("assets", "default", "ship1_256c.bmp")
+SHIP_1_PIC_THRUST = os.path.join("assets", "default", "ship1_thrust_256c.bmp")
+
 # -------------------------------------------------------------------------------------------------
 
-class Sensors(object):
+class Sensors():
 
     @staticmethod
-    def beam(window_surface, flipped_map_masks, xpos, ypos, vx, vy):
-
+    def beam(game, ship):
         # TODO use smaller map masks
         # TODO use only 0 to 90 degres beam mask quadran: https://github.com/Rabbid76/PyGameExamplesAndAnswers/blob/master/examples/minimal_examples/pygame_minimal_mask_intersect_surface_line_2.py
 
@@ -111,7 +145,7 @@ class Sensors(object):
         beam_surface_center = (int(BEAM_RADIUS/2), int(BEAM_RADIUS/2))
 
         # 30 degres step
-        for angle in range(0, 359, 30):
+        for angle in range(0, 359, BEAM_AMGLE_STEP):
 
             c = math.cos(math.radians(angle))
             s = math.sin(math.radians(angle))
@@ -119,7 +153,7 @@ class Sensors(object):
             flip_x = c < 0
             flip_y = s < 0
 
-            filpped_map_mask = flipped_map_masks[flip_x][flip_y]
+            filpped_map_mask = game.flipped_masks[flip_x][flip_y]
 
             # beam final point
             x_dest = beam_surface_center[0] + BEAM_RADIUS * abs(c)
@@ -133,55 +167,69 @@ class Sensors(object):
 
             # offset = beam mask (left/top) coordinate in the map (ie where to put our lines mask in the map)
             if flip_x:
-                offset_x = MAP_WIDTH - (xpos+SHIP_SPRITE_SIZE/2) - int(BEAM_RADIUS/2)
+                offset_x = MAP_WIDTH - (ship.xpos+SHIP_SPRITE_SIZE/2) - int(BEAM_RADIUS/2)
             else:
-                offset_x = xpos+SHIP_SPRITE_SIZE/2 - int(BEAM_RADIUS/2)
+                offset_x = ship.xpos+SHIP_SPRITE_SIZE/2 - int(BEAM_RADIUS/2)
 
             if flip_y:
-                offset_y = MAP_HEIGHT - (ypos+SHIP_SPRITE_SIZE/2) - int(BEAM_RADIUS/2)
+                offset_y = MAP_HEIGHT - (ship.ypos+SHIP_SPRITE_SIZE/2) - int(BEAM_RADIUS/2)
             else:
-                offset_y = ypos+SHIP_SPRITE_SIZE/2 - int(BEAM_RADIUS/2)
+                offset_y = ship.ypos+SHIP_SPRITE_SIZE/2 - int(BEAM_RADIUS/2)
 
             #print("offset", offset_x, offset_y)
             hit = filpped_map_mask.overlap(beam_mask, (int(offset_x), int(offset_y)))
             #print("hit", hit)
 
-            if hit is not None and (hit[0] != xpos+SHIP_SPRITE_SIZE/2 or hit[1] != ypos+SHIP_SPRITE_SIZE/2):
+            if hit is not None and (hit[0] != ship.xpos+SHIP_SPRITE_SIZE/2 or hit[1] != ship.ypos+SHIP_SPRITE_SIZE/2):
                 hx = MAP_WIDTH-1 - hit[0] if flip_x else hit[0]
                 hy = MAP_HEIGHT-1 - hit[1] if flip_y else hit[1]
                 hit = (hx, hy)
                 #print("new hit", hit)
 
                 # go back to screen coordinates
-                dx_hit = hit[0] - (xpos+SHIP_SPRITE_SIZE/2)
-                dy_hit = hit[1] - (ypos+SHIP_SPRITE_SIZE/2)
+                dx_hit = hit[0] - (ship.xpos+SHIP_SPRITE_SIZE/2)
+                dy_hit = hit[1] - (ship.ypos+SHIP_SPRITE_SIZE/2)
 
-                pygame.draw.line(window_surface, LVIOLET, ship_window_pos, (ship_window_pos[0] + dx_hit, ship_window_pos[1] + dy_hit)) 
+                pygame.draw.line(game.window, LVIOLET, ship_window_pos, (ship_window_pos[0] + dx_hit, ship_window_pos[1] + dy_hit)) 
                 #pygame.draw.circle(map, RED, hit, 2)
 
-            #window_surface.blit(BEAM_SURFACE, (VIEW_LEFT + VIEW_WIDTH, VIEW_TOP))
+                # Note: this is the distance from the center of the ship, not the borders
+                dist_wall = math.sqrt(dx_hit**2 + dy_hit**2)
+                # so remove
+                dist_wall -= (SHIP_SPRITE_SIZE/2 - 1)
+
+            # Not hit: too far
+            else:
+                dist_wall = (BEAM_RADIUS/2) * math.sqrt(2)
+
+            if dist_wall < 0:
+                dist_wall = 0
+
+            #print("Sensor for angle=%s, dist wall=%.2f" % (str(angle), dist_wall))
+
+            #game.window.blit(BEAM_SURFACE, (VIEW_LEFT + VIEW_WIDTH, VIEW_TOP))
             #map.blit(BEAM_SURFACE, (int(offset_x), int(offset_y)))
 
     @staticmethod
-    def octo(window_surface, map_mask, xpos, ypos, vx, vy, fixed_radius=False):
-        # Note: with an adaptative radius the ANN would need to also know vx and vy in adition to the 8 sensors values
+    def octo(game, ship, fixed_radius=False):
 
+        # Note: with an adaptative radius the ANN would need to also know vx and vy in adition to the 8 sensors values
         if not fixed_radius:
             radius = int(SHIP_SPRITE_SIZE * 1.5)
-            radius += 12 * math.sqrt( math.pow(vx, 2) + math.pow(vy, 2) )
+            radius += 12 * math.sqrt( math.pow(ship.vx, 2) + math.pow(ship.vy, 2) )
         else:
             radius = int(SHIP_SPRITE_SIZE * 2)
 
         # follow V vector or fixed in the grid ?
-        slx, sly  = (xpos + SHIP_SPRITE_SIZE/2) - radius, (ypos + SHIP_SPRITE_SIZE/2)
-        srx, sry  = (xpos + SHIP_SPRITE_SIZE/2) + radius, (ypos + SHIP_SPRITE_SIZE/2)
-        sux, suy  = (xpos + SHIP_SPRITE_SIZE/2), (ypos + SHIP_SPRITE_SIZE/2) - radius
-        sdx, sdy  = (xpos + SHIP_SPRITE_SIZE/2), (ypos + SHIP_SPRITE_SIZE/2) + radius
+        slx, sly  = (ship.xpos + SHIP_SPRITE_SIZE/2) - radius, (ship.ypos + SHIP_SPRITE_SIZE/2)
+        srx, sry  = (ship.xpos + SHIP_SPRITE_SIZE/2) + radius, (ship.ypos + SHIP_SPRITE_SIZE/2)
+        sux, suy  = (ship.xpos + SHIP_SPRITE_SIZE/2), (ship.ypos + SHIP_SPRITE_SIZE/2) - radius
+        sdx, sdy  = (ship.xpos + SHIP_SPRITE_SIZE/2), (ship.ypos + SHIP_SPRITE_SIZE/2) + radius
 
-        sulx, suly  = (xpos + SHIP_SPRITE_SIZE/2) - radius/1.4, (ypos + SHIP_SPRITE_SIZE/2) - radius/1.4
-        surx, sury  = (xpos + SHIP_SPRITE_SIZE/2) + radius/1.4, (ypos + SHIP_SPRITE_SIZE/2) - radius/1.4
-        sdlx, sdly  = (xpos + SHIP_SPRITE_SIZE/2) - radius/1.4, (ypos + SHIP_SPRITE_SIZE/2) + radius/1.4
-        sdrx, sdry  = (xpos + SHIP_SPRITE_SIZE/2) + radius/1.4, (ypos + SHIP_SPRITE_SIZE/2) + radius/1.4
+        sulx, suly  = (ship.xpos + SHIP_SPRITE_SIZE/2) - radius/1.4, (ship.ypos + SHIP_SPRITE_SIZE/2) - radius/1.4
+        surx, sury  = (ship.xpos + SHIP_SPRITE_SIZE/2) + radius/1.4, (ship.ypos + SHIP_SPRITE_SIZE/2) - radius/1.4
+        sdlx, sdly  = (ship.xpos + SHIP_SPRITE_SIZE/2) - radius/1.4, (ship.ypos + SHIP_SPRITE_SIZE/2) + radius/1.4
+        sdrx, sdry  = (ship.xpos + SHIP_SPRITE_SIZE/2) + radius/1.4, (ship.ypos + SHIP_SPRITE_SIZE/2) + radius/1.4
 
         # position for game.map for the collsion mask
         sensors_pos = [(slx, sly), (srx, sry), (sux, suy), (sdx, sdy), \
@@ -192,7 +240,7 @@ class Sensors(object):
         # collision
         for s in sensors_pos:
             try:
-                color = RED if map_mask.get_at((int(s[0]), int(s[1]))) else WHITE
+                color = RED if game.map_mask.get_at((int(s[0]), int(s[1]))) else WHITE
             # out of bound => no collision
             except:
                 color = WHITE
@@ -205,26 +253,14 @@ class Sensors(object):
 
         for i, s in enumerate(sensors_pos):
             #gfxdraw.pixel(surface, int(VIEW_WIDTH/2) + VIEW_LEFT + int(s[0]) , int(VIEW_HEIGHT/2) + VIEW_TOP + int(s[1]), colors[i])
-            pygame.draw.circle(window_surface, colors[i], (int(VIEW_WIDTH/2) + VIEW_LEFT + int(s[0]) , int(VIEW_HEIGHT/2) + VIEW_TOP + int(s[1])), 2, width=0)
-
-    @staticmethod
-    def circle(window_surface, map_mask, xpos, ypos, vx, vy, fixed_radius = False):
-
-        if not fixed_radius:
-            radius = int(SHIP_SPRITE_SIZE * 1.5)
-            radius += 12 * math.sqrt( math.pow(vx, 2) + math.pow(vy, 2) )
-        else:
-            radius = int(SHIP_SPRITE_SIZE * 2)
-
-        pygame.draw.circle(window_surface, WHITE, (int(VIEW_WIDTH/2) + VIEW_LEFT + SHIP_SPRITE_SIZE/2 , int(VIEW_HEIGHT/2) + VIEW_TOP + SHIP_SPRITE_SIZE/2), radius, width=1)
+            pygame.draw.circle(game.window, colors[i], (int(VIEW_WIDTH/2) + VIEW_LEFT + int(s[0]) , int(VIEW_HEIGHT/2) + VIEW_TOP + int(s[1])), 2, width=0)
 
 # -------------------------------------------------------------------------------------------------
 
-class Ship(object):
+class Ship():
 
-    def __init__(self, xpos, ypos, lives):
+    def __init__(self, xpos, ypos, ship_pic, ship_pic_thrust, keys_mapping, joystick_number, lives):
 
-        #
         self.xpos = xpos
         self.ypos = ypos
         self.xposprecise = xpos
@@ -246,26 +282,77 @@ class Ship(object):
         self.lives = lives
 
         # sound 
-        self.sound_thrust = pygame.mixer.Sound( os.path.join("assets", "default", "sfx_loop_thrust.wav") )
-        self.sound_explod = pygame.mixer.Sound( os.path.join("assets", "default", "sfx_boom.wav") )
-        self.sound_bounce = pygame.mixer.Sound( os.path.join("assets", "default", "sfx_rebound.wav") )
+        self.sound_thrust = pygame.mixer.Sound(SOUND_THURST)
+        self.sound_explod = pygame.mixer.Sound(SOUND_EXPLOD)
+        self.sound_bounce = pygame.mixer.Sound(SOUND_BOUNCE)
 
         # ship pic: 32x32, black (0,0,0) background, no alpha
-        self.ship_pic = pygame.image.load( os.path.join("assets", "default", "ship1_256c.bmp") ).convert()
+        self.ship_pic = pygame.image.load(ship_pic).convert()
         self.ship_pic.set_colorkey( (0, 0, 0) ) # used for the mask, black = background, not the ship
 
-        self.ship_pic_thrust = pygame.image.load( os.path.join("assets", "default", "ship1_thrust_256c.bmp") ).convert()
+        self.ship_pic_thrust = pygame.image.load(ship_pic_thrust).convert()
         self.ship_pic_thrust.set_colorkey( (0, 0, 0) ) # used for the mask, black = background, not the ship
 
         self.image = self.ship_pic
         self.mask = pygame.mask.from_surface(self.image)
 
-    def update(self, ship_controls, motion):
+        self.keys_mapping = keys_mapping
+        self.joystick_number = joystick_number
 
-        if motion == "basic":
+    def update(self, sequence):
+
+        # normal play
+        if not sequence.play_recorded:
+            keys = pygame.key.get_pressed()
+
+            left_pressed   = keys[self.keys_mapping["left"]]
+            right_pressed  = keys[self.keys_mapping["right"]]
+            up_pressed     = keys[self.keys_mapping["up"]]
+            down_pressed   = keys[self.keys_mapping["down"]]
+            thrust_pressed = keys[self.keys_mapping["thrust"]]
+            shoot_pressed  = keys[self.keys_mapping["shoot"]]
+            shield_pressed = keys[self.keys_mapping["shield"]]
+
+            if self.joystick_number:
+                if pygame.joystick.Joystick(self.joystick_number-1).get_button(0):
+                    thrust_pressed = True
+                else:
+                    thrust_pressed = False
+                    
+                horizontal_axis = pygame.joystick.Joystick(self.joystick_number-1).get_axis(0)
+
+                if int(round(horizontal_axis)) == 1:
+                    right_pressed = True
+                else:
+                    right_pressed = False
+
+                if int(round(horizontal_axis)) == -1:
+                    left_pressed = True
+                else:
+                    left_pressed = False
+
+            # record play ?
+            if sequence.record_play:
+                sequence.played_data.append((left_pressed, right_pressed, thrust_pressed))
+
+        # play recorded sequence
+        else:
+            try:
+                data_i = sequence.played_data[sequence.frames]
+
+                left_pressed   = True if data_i[0] else False
+                right_pressed  = True if data_i[1] else False
+                thrust_pressed = True if data_i[2] else False
+            except:
+                print("End of playback")
+                print("Frames=", sequence.frames)
+                print("%s seconds" % int(sequence.frames/MAX_FPS))
+                sys.exit(0)
+
+        if sequence.motion == "basic":
 
             # pic
-            if ship_controls["LEFT"] or ship_controls["RIGHT"] or ship_controls["UP"] or ship_controls["DOWN"]:
+            if left_pressed or right_pressed or up_pressed or down_pressed:
                 self.image = self.ship_pic_thrust
             else:
                 self.image = self.ship_pic
@@ -273,35 +360,35 @@ class Ship(object):
             #
             dx = dy = 0
 
-            if ship_controls["LEFT"]:
+            if left_pressed:
                 dx = -1
-            if ship_controls["RIGHT"]:
+            if right_pressed:
                 dx = 1
-            if ship_controls["UP"]:
+            if up_pressed:
                 dy = -1
-            if ship_controls["DOWN"]:
+            if down_pressed:
                 dy = 1
 
             self.xpos += dx
             self.ypos += dy
 
-        elif motion == "thrust":
+        elif sequence.motion == "thrust":
 
             # pic
-            if ship_controls["THRUST"]:
+            if thrust_pressed:
                 self.image = self.ship_pic_thrust
             else:
                 self.image = self.ship_pic
 
             # angle
-            if ship_controls["LEFT"]:
+            if left_pressed:
                 self.angle += SHIP_ANGLESTEP
-            if ship_controls["RIGHT"]:
+            if right_pressed:
                 self.angle -= SHIP_ANGLESTEP
 
             self.angle = self.angle % 360
 
-            if ship_controls["THRUST"]:
+            if thrust_pressed:
                 coef = 2
                 self.xposprecise -= coef * math.cos( math.radians(90 - self.angle) )
                 self.yposprecise -= coef * math.sin( math.radians(90 - self.angle) )
@@ -310,10 +397,10 @@ class Ship(object):
                 self.xpos = int(self.xposprecise)
                 self.ypos = int(self.yposprecise)
 
-        elif motion == "gravity":
+        elif sequence.motion == "gravity":
     
             # pic
-            if ship_controls["THRUST"]:
+            if thrust_pressed:
                 self.image = self.ship_pic_thrust
 
                 #self.thrust += 0.1
@@ -334,9 +421,9 @@ class Ship(object):
 
             if not self.landed:
                 # angle
-                if ship_controls["LEFT"]:
+                if left_pressed:
                     self.angle += SHIP_ANGLESTEP
-                if ship_controls["RIGHT"]:
+                if right_pressed:
                     self.angle -= SHIP_ANGLESTEP
 
                 # 
@@ -371,15 +458,12 @@ class Ship(object):
         #
         # rotate
         self.image_rotated = pygame.transform.rotate(self.image, self.angle)
-
-        rect = self.image_rotated.get_rect()
-        rot_xoffset = ((SHIP_SPRITE_SIZE - rect.width)/2)
-        rot_yoffset = ((SHIP_SPRITE_SIZE - rect.height)/2)
-        
         self.mask = pygame.mask.from_surface(self.image_rotated)
 
-        return int(rot_xoffset), int(rot_yoffset)
-
+        rect = self.image_rotated.get_rect()
+        self.rot_xoffset = int( ((SHIP_SPRITE_SIZE - rect.width)/2) )  # used in draw() and collide()
+        self.rot_yoffset = int( ((SHIP_SPRITE_SIZE - rect.height)/2) ) # used in draw() and collide()
+        
     def is_landed(self):
 
         for plaform in PLATFORMS_1:
@@ -430,9 +514,35 @@ class Ship(object):
 
         return test_it
 
+    def draw(self, game_window):
+        game_window.blit(self.image_rotated, (VIEW_WIDTH/2 + VIEW_LEFT + self.rot_xoffset, VIEW_HEIGHT/2 + VIEW_TOP + self.rot_yoffset))
+
+    def collide(self, game_map, game_map_mask):
+
+        # ship size mask
+        if USE_MINI_MASK:
+            mini_area = Rect(self.xpos, self.ypos, SHIP_SPRITE_SIZE, SHIP_SPRITE_SIZE)
+            mini_subsurface = game_map.subsurface(mini_area)
+            mini_subsurface.set_colorkey( (0, 0, 0) ) # used for the mask, black = background
+            mini_mask = pygame.mask.from_surface(mini_subsurface)
+
+            if self.do_test_collision():
+                offset = (self.rot_xoffset, self.rot_yoffset) # pos of the ship
+
+                if mini_mask.overlap(self.mask, offset): # https://stackoverflow.com/questions/55817422/collision-between-masks-in-pygame/55818093#55818093
+                    self.explod = True
+
+        # player view size mask
+        else:
+            if self.do_test_collision():
+                offset = (self.xpos + self.rot_xoffset, self.ypos + self.rot_yoffset) # pos of the ship
+
+                if game_map_mask.overlap(self.mask, offset): # https://stackoverflow.com/questions/55817422/collision-between-masks-in-pygame/55818093#55818093
+                    self.explod = True
+
 # -------------------------------------------------------------------------------------------------
 
-class Game(object):
+class Game():
 
     def __init__(self, game_width, game_height):
 
@@ -444,7 +554,7 @@ class Game(object):
         self.window = pygame.display.set_mode((game_width, game_height), pygame.DOUBLEBUF)
 
         # Background
-        self.map = pygame.image.load( os.path.join("assets", "level1", "Mayhem_Level1_Map_256c.bmp") ).convert() # .convert_alpha()
+        self.map = pygame.image.load(MAP_1).convert() # .convert_alpha()
 
         self.map.set_colorkey( (0, 0, 0) ) # used for the mask, black = background
         #self.map_rect = self.map.get_rect()
@@ -456,9 +566,9 @@ class Game(object):
 
 # -------------------------------------------------------------------------------------------------
 
-class Sequence(object):
+class Sequence():
     
-    def __init__(self, screen_width, screen_height, motion="gravity", sensor="", record_play=False, play_recorded=False):
+    def __init__(self, screen_width, screen_height, motion="gravity", sensor="", record_play="", play_recorded=""):
 
         self.myfont = pygame.font.SysFont('Arial', 20)
 
@@ -477,16 +587,8 @@ class Sequence(object):
         self.play_recorded = play_recorded
 
         if self.play_recorded:
-            with open("played.dat", "rb") as f:
+            with open(self.play_recorded, "rb") as f:
                 self.played_data = pickle.load(f)
-
-        #init  motion
-        self.ship_controls = {}
-        self.ship_controls["LEFT"]   = False
-        self.ship_controls["RIGHT"]  = False
-        self.ship_controls["UP"]     = False
-        self.ship_controls["DOWN"]   = False
-        self.ship_controls["THRUST"] = False
 
         # FPS
         self.clock = pygame.time.Clock()
@@ -499,7 +601,7 @@ class Sequence(object):
         # exit on Quit        
         while True:
 
-            self.ship_1 = Ship(SHIP_X, SHIP_Y, SHIP_MAX_LIVES - nb_dead)
+            self.ship_1 = Ship(SHIP_X, SHIP_Y, SHIP_1_PIC, SHIP_1_PIC_THRUST, SHIP_1_KEYS, SHIP_1_JOY, SHIP_MAX_LIVES - nb_dead)
 
             # run_loop() exits when ship explods
             self.run_loop()
@@ -512,198 +614,48 @@ class Sequence(object):
 
             # record play ?
             if self.record_play:
-                with open("played.dat", "wb") as f:
+                with open(self.record_play, "wb") as f:
                     pickle.dump(self.played_data, f, protocol=pickle.HIGHEST_PROTOCOL)
                 time.sleep(0.1)
                 print("Frames=", self.frames)
                 print("%s seconds" % int(self.frames/MAX_FPS))
                 sys.exit(0)
 
-    def play_recorded_data(self):
-
-        # exit ?
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                sys.exit(0)
-
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    sys.exit(0)
-
-        try:
-            data_i = self.played_data[self.frames]
-
-            if data_i[0]:
-                self.ship_controls["LEFT"] = True
-            else:
-                self.ship_controls["LEFT"] = False
-
-            if data_i[1]:
-                self.ship_controls["RIGHT"] = True
-            else:
-                self.ship_controls["RIGHT"] = False
-
-            if data_i[2]:
-                self.ship_controls["THRUST"] = True
-            else:
-                self.ship_controls["THRUST"] = False
-        except:
-            print("End of playback")
-            print("Frames=", self.frames)
-            print("%s seconds" % int(self.frames/MAX_FPS))
-            sys.exit(0)
-
-    def handle_events(self):
-
-        for event in pygame.event.get():
-            #print(event, event.type)
-
-            if event.type == pygame.QUIT:
-                sys.exit(0)
-
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    sys.exit(0)
-
-                elif event.key == pygame.K_LEFT:
-                    self.ship_controls["LEFT"] = True
-                elif event.key == pygame.K_RIGHT:
-                    self.ship_controls["RIGHT"] = True
-                elif event.key == pygame.K_UP:
-                    self.ship_controls["UP"] = True
-                elif event.key == pygame.K_DOWN:
-                    self.ship_controls["DOWN"] = True
-                elif event.key == pygame.K_KP_PERIOD:
-                    self.ship_controls["THRUST"] = True
-
-            elif event.type == pygame.KEYUP:
-    
-                if event.key == pygame.K_LEFT:
-                    self.ship_controls["LEFT"] = False
-                elif event.key == pygame.K_RIGHT:
-                    self.ship_controls["RIGHT"] = False
-                elif event.key == pygame.K_UP:
-                    self.ship_controls["UP"] = False
-                elif event.key == pygame.K_DOWN:
-                    self.ship_controls["DOWN"] = False
-                elif event.key == pygame.K_KP_PERIOD:
-                    self.ship_controls["THRUST"] = False
-
-            elif event.type == pygame.JOYAXISMOTION:
-
-                if event.axis == 0:
-                    if int(event.value) == 1:
-                        self.ship_controls["RIGHT"] = True
-                    else:
-                        self.ship_controls["RIGHT"] = False
-
-                    if int(event.value) == -1:
-                        self.ship_controls["LEFT"] = True
-                    else:
-                        self.ship_controls["LEFT"] = False
-
-            elif event.type == pygame.JOYBUTTONUP:
-                if event.button == 0:
-                    self.ship_controls["THRUST"] = False
-            elif event.type == pygame.JOYBUTTONDOWN:
-                if event.button == 0:
-                    self.ship_controls["THRUST"] = True
-
-            elif event.type == pygame.JOYBALLMOTION:
-                print("Joystick JOYBALLMOTION pressed.")
-            elif event.type == pygame.JOYHATMOTION:
-                print("Joystick JOYHATMOTION pressed.")
-
-        # record play ?
-        if self.record_play:
-            self.played_data.append((self.ship_controls["LEFT"], self.ship_controls["RIGHT"], self.ship_controls["THRUST"]))
-
     def run_loop(self):
 
         # Game Main Loop
         while not self.ship_1.explod:
 
-            # pygame events
-            if not self.play_recorded:
-                self.handle_events()
-            else:
-                self.play_recorded_data()              
-
             # clear screen
             self.game.window.fill((0,0,0))
+
+            # pygame events
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    sys.exit(0)
+
+                elif event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        sys.exit(0)
+
+            # update ship mvt based on key pressed (or play recorded data)
+            self.ship_1.update(self)
 
             # blit the map area around the ship on the screen
             sub_area = Rect(self.ship_1.xpos - VIEW_WIDTH/2, self.ship_1.ypos - VIEW_HEIGHT/2, VIEW_WIDTH, VIEW_HEIGHT)
             self.game.window.blit(self.game.map, (VIEW_LEFT, VIEW_TOP), sub_area)
 
-            # move ship
-            rot_xoffset, rot_yoffset = self.ship_1.update(self.ship_controls, self.motion)
-
-            # blit ship
-            self.game.window.blit(self.ship_1.image_rotated, (VIEW_WIDTH/2 + VIEW_LEFT + rot_xoffset, VIEW_HEIGHT/2 + VIEW_TOP + rot_yoffset))
-
-            # mini mask: mask the size of the ship, following the ship pos in the map
-            if USE_MINI_MASK:
-                mini_area = Rect(self.ship_1.xpos, self.ship_1.ypos, SHIP_SPRITE_SIZE, SHIP_SPRITE_SIZE)
-                mini_subsurface = self.game.map.subsurface(mini_area)
-                mini_subsurface.set_colorkey( (0, 0, 0) ) # used for the mask, black = background
-                mini_mask = pygame.mask.from_surface(mini_subsurface)
-
-                # collision
-                collision_str = "No Test"
-                if self.ship_1.do_test_collision():
-                    offset = (rot_xoffset, rot_yoffset) # pos of the ship
-
-                    if mini_mask.overlap(self.ship_1.mask, offset): # https://stackoverflow.com/questions/55817422/collision-between-masks-in-pygame/55818093#55818093
-                        collision_str = "BOOM"
-                        self.ship_1.explod = True
-                    else:
-                        collision_str = "OK"
-
-            else:
-                # collision
-                collision_str = "No Test"
-                if self.ship_1.do_test_collision():
-                    offset = (self.ship_1.xpos + rot_xoffset, self.ship_1.ypos + rot_yoffset) # pos of the ship
-
-                    if self.game.map_mask.overlap(self.ship_1.mask, offset): # https://stackoverflow.com/questions/55817422/collision-between-masks-in-pygame/55818093#55818093
-                        collision_str = "BOOM"
-                        self.ship_1.explod = True
-                    else:
-                        collision_str = "OK"
+            # blit ship in the window
+            self.ship_1.draw(self.game.window)
+            
+            # collision
+            self.ship_1.collide(self.game.map, self.game.map_mask)
 
             # sensors
-            if self.sensor == "octo":
-                Sensors.octo(self.game.window, self.game.map_mask, self.ship_1.xpos, self.ship_1.ypos, self.ship_1.vx, self.ship_1.vy, fixed_radius=False)
-            if self.sensor == "octo_fixed":
-                Sensors.octo(self.game.window, self.game.map_mask, self.ship_1.xpos, self.ship_1.ypos, self.ship_1.vx, self.ship_1.vy, fixed_radius=True)
-            elif self.sensor == "beam":
-                Sensors.beam(self.game.window, self.game.flipped_masks, self.ship_1.xpos, self.ship_1.ypos, self.ship_1.vx, self.ship_1.vy)
-            elif self.sensor == "circle":
-                Sensors.circle(self.game.window, self.game.map_mask, self.ship_1.xpos, self.ship_1.ypos, self.ship_1.vx, self.ship_1.vy)
+            self.activate_sensors()
 
-            # debug text
-            if DEBUG_SCREEN:
-                collision = self.myfont.render('Collision: %s' % collision_str, False, (255, 255, 255))
-                self.game.window.blit(collision, (DEBUG_TEXT_XPOS + 5, 5))
-
-                ship_pos = self.myfont.render('Ship pos: %s %s' % (self.ship_1.xpos, self.ship_1.ypos), False, (255, 255, 255))
-                self.game.window.blit(ship_pos, (DEBUG_TEXT_XPOS + 5, 30))
-
-                ship_va = self.myfont.render('Ship vx=%.2f, vy=%.2f, ax=%.2f, ay=%.2f' % (self.ship_1.vx,self.ship_1.vy, self.ship_1.ax, self.ship_1.ay), False, (255, 255, 255))
-                self.game.window.blit(ship_va, (DEBUG_TEXT_XPOS + 5, 55))
-
-                ship_angle = self.myfont.render('Ship angle: %s' % (self.ship_1.angle,), False, (255, 255, 255))
-                self.game.window.blit(ship_angle, (DEBUG_TEXT_XPOS + 5, 80))
-
-                ship_lives = self.myfont.render('Ship lives: %s' % (self.ship_1.lives,), False, (255, 255, 255))
-                self.game.window.blit(ship_lives, (DEBUG_TEXT_XPOS + 5, 105))
-
-                dt = self.myfont.render('Frames: %s' % (self.frames,), False, (255, 255, 255))
-                self.game.window.blit(dt, (DEBUG_TEXT_XPOS + 5, 130))
-
-                fps = self.myfont.render('FPS: %.2f' % self.clock.get_fps(), False, (255, 255, 255))
-                self.game.window.blit(fps, (DEBUG_TEXT_XPOS + 5, 155))
+            # debug on screen
+            self.screen_print_info()
 
             # display
             pygame.display.flip()
@@ -711,6 +663,35 @@ class Sequence(object):
 
             self.frames += 1
             #print(self.clock.get_fps())
+
+    def activate_sensors(self):
+        if self.sensor == "octo":
+            Sensors.octo(self.game, self.ship_1, fixed_radius=False)
+        if self.sensor == "octo_fixed":
+            Sensors.octo(self.game, self.ship_1, fixed_radius=True)
+        elif self.sensor == "beam":
+            Sensors.beam(self.game, self.ship_1)
+
+    def screen_print_info(self):
+        # debug text
+        if DEBUG_SCREEN:
+            ship_pos = self.myfont.render('Pos: %s %s' % (self.ship_1.xpos, self.ship_1.ypos), False, (255, 255, 255))
+            self.game.window.blit(ship_pos, (DEBUG_TEXT_XPOS + 5, 30))
+
+            ship_va = self.myfont.render('vx=%.2f, vy=%.2f, ax=%.2f, ay=%.2f' % (self.ship_1.vx,self.ship_1.vy, self.ship_1.ax, self.ship_1.ay), False, (255, 255, 255))
+            self.game.window.blit(ship_va, (DEBUG_TEXT_XPOS + 5, 55))
+
+            ship_angle = self.myfont.render('Angle: %s' % (self.ship_1.angle,), False, (255, 255, 255))
+            self.game.window.blit(ship_angle, (DEBUG_TEXT_XPOS + 5, 80))
+
+            dt = self.myfont.render('Frames: %s' % (self.frames,), False, (255, 255, 255))
+            self.game.window.blit(dt, (DEBUG_TEXT_XPOS + 5, 105))
+
+            fps = self.myfont.render('FPS: %.2f' % self.clock.get_fps(), False, (255, 255, 255))
+            self.game.window.blit(fps, (DEBUG_TEXT_XPOS + 5, 130))
+
+            #ship_lives = self.myfont.render('Lives: %s' % (self.ship_1.lives,), False, (255, 255, 255))
+            #self.game.window.blit(ship_lives, (DEBUG_TEXT_XPOS + 5, 105))
 
 # -------------------------------------------------------------------------------------------------
 
@@ -736,9 +717,9 @@ def run():
     # options
     parser = argparse.ArgumentParser()
     parser.add_argument('-m', '--motion', help='How the ship moves', action="store", default='gravity', choices=("basic", "thrust", "gravity"))
-    parser.add_argument('-r', '--record_play', help='', action="store_true", default=False)
-    parser.add_argument('-pr', '--play_recorded', help='', action="store_true", default=False)
-    parser.add_argument('-s', '--sensor', help='', action="store", default="", choices=("octo", "octo_fixed", "beam", "circle", ""))
+    parser.add_argument('-r', '--record_play', help='', action="store", default="")
+    parser.add_argument('-pr', '--play_recorded', help='', action="store", default="")
+    parser.add_argument('-s', '--sensor', help='', action="store", default="", choices=("octo", "octo_fixed", "beam", ""))
 
     result = parser.parse_args()
     args = dict(result._get_kwargs())
