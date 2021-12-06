@@ -67,15 +67,15 @@ VIEW1_LEFT = 20     # X position in the window
 VIEW1_TOP  = 20     # Y position in the window
 VIEW1_WIDTH  = 600   # view width
 VIEW1_HEIGHT = 400   # view height
-SHIP1_X = 430        # ie left
-SHIP1_Y = 730        # ie top
+SHIP1_X = 203        # ie left
+SHIP1_Y = 845        # ie top
 
 VIEW2_LEFT = 640     # X position in the window
 VIEW2_TOP  = 20      # Y position in the window
 VIEW2_WIDTH  = 600   # view width
 VIEW2_HEIGHT = 400   # view height
-SHIP2_X = 485        # ie left
-SHIP2_Y = 730        # ie top
+SHIP2_X = 463        # ie left
+SHIP2_Y = 805        # ie top
 
 USE_MINI_MASK = True # mask the size of the ship (instead of the player view size)
 
@@ -762,6 +762,7 @@ class Game():
         #self.flipped_masks = [[self.map_mask, self.mask_map_fy], [self.mask_map_fx, self.mask_map_fx_fy]]
 
         self.map_buffer = self.map.copy() # pygame.Surface((self.map.get_width(), self.map.get_height()))
+
         self.map_buffer.set_colorkey( (0, 0, 0) )
         self.map_buffer_mask = pygame.mask.from_surface(self.map_buffer)
         self.mask_map_buffer_fx = pygame.mask.from_surface(pygame.transform.flip(self.map_buffer, True, False))
@@ -819,7 +820,11 @@ class Sequence():
 
             # ----- training_loop() exits when ship explods
             if self.mode == "training":
+                self.ship_1 = Ship(VIEW1_LEFT, VIEW1_TOP, VIEW1_WIDTH, VIEW1_HEIGHT, 430, 730, \
+                                SHIP_1_PIC, SHIP_1_PIC_THRUST, SHIP_1_PIC_SHIELD, SHIP_1_KEYS, SHIP_1_JOY, SHIP_MAX_LIVES - nb_dead)
+
                 self.training_loop(nb_dead)
+
             elif self.mode == "game":
                 self.game_multiplayer_loop()
 
@@ -913,8 +918,6 @@ class Sequence():
             #print(self.clock.get_fps())
 
     def training_loop(self, nb_dead):
-
-        self.ship_1 = self.ships[0]
 
         # Game Main Loop
         while not self.ship_1.explod:
