@@ -105,7 +105,8 @@ iCoeffax = 0.6
 iCoeffay = 0.6
 iCoeffvx = 0.6
 iCoeffvy = 0.6
-iCoeffimpact = 0.2
+iCoeffimpact = 0.02
+MAX_SHOOT = 20
 
 # -------------------------------------------------------------------------------------------------
 # Levels / controls
@@ -124,7 +125,7 @@ PLATFORMS_1 = [ ( 464, 513, 333 ),
                 ( 68, 145, 1181 ) ]
 
 SHIP_1_KEYS = {"left":pygame.K_LEFT, "right":pygame.K_RIGHT, "up":pygame.K_UP, "down":pygame.K_DOWN, \
-               "thrust":pygame.K_KP_PERIOD, "shoot":pygame.K_KP_PERIOD, "shield":pygame.K_KP_PERIOD}
+               "thrust":pygame.K_KP_PERIOD, "shoot":pygame.K_KP_ENTER, "shield":pygame.K_KP0}
 SHIP_1_JOY = 0 # 0 means no joystick, =!0 means joystck number SHIP_1_JOY - 1
 
 SHIP_2_KEYS = {"left":pygame.K_w, "right":pygame.K_x, "up":pygame.K_UP, "down":pygame.K_DOWN, \
@@ -139,11 +140,16 @@ MAP_1 = os.path.join("assets", "level1", "Mayhem_Level1_Map_256c.bmp")
 SOUND_THURST  = os.path.join("assets", "default", "sfx_loop_thrust.wav")
 SOUND_EXPLOD  = os.path.join("assets", "default", "sfx_boom.wav")
 SOUND_BOUNCE  = os.path.join("assets", "default", "sfx_rebound.wav")
+SOUND_SHOOT   = os.path.join("assets", "default", "sfx_shoot.wav")
+SOUND_SHIELD  = os.path.join("assets", "default", "sfx_loop_shield.wav")
 
 SHIP_1_PIC        = os.path.join("assets", "default", "ship1_256c.bmp")
 SHIP_1_PIC_THRUST = os.path.join("assets", "default", "ship1_thrust_256c.bmp")
+SHIP_1_PIC_SHIELD = os.path.join("assets", "default", "ship1_shield_256c.bmp")
+
 SHIP_2_PIC        = os.path.join("assets", "default", "ship2_256c.bmp")
 SHIP_2_PIC_THRUST = os.path.join("assets", "default", "ship2_thrust_256c.bmp")
+SHIP_2_PIC_SHIELD = os.path.join("assets", "default", "ship2_shield_256c.bmp")
 
 # -------------------------------------------------------------------------------------------------
 
@@ -273,9 +279,20 @@ class Sensors():
 
 # -------------------------------------------------------------------------------------------------
 
+class Shot():
+    def __init__(self):
+        self.x = 0
+        self.y = 0
+        self.xposprecise = 0
+        self.yposprecise = 0
+        self.dx = 0
+        self.dy = 0
+
+# -------------------------------------------------------------------------------------------------
+
 class Ship():
 
-    def __init__(self, view_left, view_top, view_width, view_height, xpos, ypos, ship_pic, ship_pic_thrust, keys_mapping, joystick_number, lives):
+    def __init__(self, view_left, view_top, view_width, view_height, xpos, ypos, ship_pic, ship_pic_thrust, ship_pic_shield, keys_mapping, joystick_number, lives):
 
         self.init_xpos = xpos
         self.init_ypos = ypos
@@ -290,10 +307,14 @@ class Ship():
         self.ax = 0.0
         self.ay = 0.0
 
+        self.impactx = 0.0
+        self.impacty = 0.0
+
         self.angle  = 0.0
         self.thrust = 0.0
         self.shield = False
         self.shoot  = False
+        self.shoot_delay = False
         self.landed = False
         self.bounce = False
         self.explod = False
@@ -304,18 +325,22 @@ class Ship():
         self.view_height = view_height
 
         self.lives = lives
+        self.shots = []
 
         # sound
         self.sound_thrust = pygame.mixer.Sound(SOUND_THURST)
         self.sound_explod = pygame.mixer.Sound(SOUND_EXPLOD)
         self.sound_bounce = pygame.mixer.Sound(SOUND_BOUNCE)
+        self.sound_shoot  = pygame.mixer.Sound(SOUND_SHOOT)
+        self.sound_shield = pygame.mixer.Sound(SOUND_SHIELD)
 
         # ship pic: 32x32, black (0,0,0) background, no alpha
         self.ship_pic = pygame.image.load(ship_pic).convert()
         self.ship_pic.set_colorkey( (0, 0, 0) ) # used for the mask, black = background, not the ship
-
         self.ship_pic_thrust = pygame.image.load(ship_pic_thrust).convert()
         self.ship_pic_thrust.set_colorkey( (0, 0, 0) ) # used for the mask, black = background, not the ship
+        self.ship_pic_shield = pygame.image.load(ship_pic_shield).convert()
+        self.ship_pic_shield.set_colorkey( (0, 0, 0) ) # used for the mask, black = background, not the ship
 
         self.image = self.ship_pic
         self.mask = pygame.mask.from_surface(self.image)
@@ -343,7 +368,17 @@ class Ship():
                         thrust_pressed = True
                     else:
                         thrust_pressed = False
-                        
+
+                    if pygame.joystick.Joystick(self.joystick_number-1).get_button(5):
+                        shoot_pressed = True
+                    else:
+                        shoot_pressed = False
+
+                    if pygame.joystick.Joystick(self.joystick_number-1).get_button(1):
+                        shield_pressed = True
+                    else:
+                        shield_pressed = False
+
                     horizontal_axis = pygame.joystick.Joystick(self.joystick_number-1).get_axis(0)
 
                     if int(round(horizontal_axis)) == 1:
@@ -426,24 +461,60 @@ class Ship():
 
         elif sequence.motion == "gravity":
     
-            # pic
-            if thrust_pressed:
-                self.image = self.ship_pic_thrust
+            self.image = self.ship_pic
+            self.thrust = 0.0
+            self.shield = False
 
-                #self.thrust += 0.1
-                #if self.thrust >= SHIP_THRUST_MAX:
-                self.thrust = SHIP_THRUST_MAX
-
-                if not pygame.mixer.get_busy():
-                    self.sound_thrust.play(-1)
-
-                self.landed = False
-
-            else:
-                self.image = self.ship_pic
-                self.thrust = 0.0
+            # shield
+            if shield_pressed:
+                self.image = self.ship_pic_shield
+                self.shield = True
                 self.sound_thrust.stop()
 
+                if not pygame.mixer.get_busy():
+                    self.sound_shield.play(-1)
+            else:
+                self.shield = False
+                self.sound_shield.stop()
+
+                # thrust
+                if thrust_pressed:
+                    self.image = self.ship_pic_thrust
+
+                    #self.thrust += 0.1
+                    #if self.thrust >= SHIP_THRUST_MAX:
+                    self.thrust = SHIP_THRUST_MAX
+
+                    if not pygame.mixer.get_busy():
+                        self.sound_thrust.play(-1)
+
+                    self.landed = False
+
+                else:
+                    self.thrust = 0.0
+                    self.sound_thrust.stop()
+
+            # shoot delay
+            if shoot_pressed and not self.shoot:
+                self.shoot_delay = True
+            else:
+                self.shoot_delay = False
+
+            # shoot
+            if shoot_pressed:
+                self.shoot = True
+
+                if self.shoot_delay:
+                    if len(self.shots) < MAX_SHOOT:
+                        if not pygame.mixer.get_busy():
+                            self.sound_shoot.play()
+
+                        self.add_shots()
+            else:
+                self.shoot = False
+                self.sound_shoot.stop()
+
+            #
             self.bounce = False
 
             if not self.landed:
@@ -459,6 +530,13 @@ class Ship():
                 # https://gafferongames.com/post/integration_basics/
                 self.ax = self.thrust * -math.cos( math.radians(90 - self.angle) ) # ax = thrust * sin1
                 self.ay = iG + (self.thrust * -math.sin( math.radians(90 - self.angle))) # ay = g + thrust * (-cos1)
+
+                # shoot when shield is on
+                if self.impactx or self.impacty:
+                    self.ax += iCoeffimpact * self.impactx
+                    self.ay += iCoeffimpact * self.impacty
+                    self.impactx = 0.
+                    self.impacty = 0.
 
                 self.vx = self.vx + (iCoeffax * self.ax) # vx += coeffa * ax
                 self.vy = self.vy + (iCoeffay * self.ay) # vy += coeffa * ay
@@ -490,7 +568,41 @@ class Ship():
         rect = self.image_rotated.get_rect()
         self.rot_xoffset = int( ((SHIP_SPRITE_SIZE - rect.width)/2) )  # used in draw() and collide_map()
         self.rot_yoffset = int( ((SHIP_SPRITE_SIZE - rect.height)/2) ) # used in draw() and collide_map()
-        
+
+    def plot_shots(self, map_buffer):
+        for shot in list(self.shots): # copy of self.shots
+            shot.xposprecise += shot.dx
+            shot.yposprecise += shot.dy
+            shot.x = int(shot.xposprecise)
+            shot.y = int(shot.yposprecise)
+
+            try:
+                c = map_buffer.get_at((int(shot.x), int(shot.y)))
+                if (c.r != 0) or (c.g != 0) or (c.b != 0):
+                    self.shots.remove(shot)
+
+                gfxdraw.pixel(map_buffer, int(shot.x) , int(shot.y), WHITE)
+                #pygame.draw.line(map_buffer, WHITE, (int(self.xpos + SHIP_SPRITE_SIZE/2), int(self.ypos + SHIP_SPRITE_SIZE/2)), (int(shot.x), int(shot.y)))
+                #pygame.draw.line(map_buffer, WHITE, (int(shot.x), int(shot.y)), (int(shot.x), int(shot.y)))
+
+            # out of surface
+            except IndexError:
+                self.shots.remove(shot)
+
+    def add_shots(self):
+        shot = Shot()
+
+        shot.x = (self.xpos+15) + 18 * -math.cos(math.radians(90 - self.angle))
+        shot.y = (self.ypos+16) + 18 * -math.sin(math.radians(90 - self.angle))
+        shot.xposprecise = shot.x
+        shot.yposprecise = shot.y
+        shot.dx = 5.1 * -math.cos(math.radians(90 - self.angle))
+        shot.dy = 5.1 * -math.sin(math.radians(90 - self.angle))
+        shot.dx += self.vx / 3.5
+        shot.dy += self.vy / 3.5
+
+        self.shots.append(shot)
+
     def is_landed(self):
 
         for plaform in PLATFORMS_1:
@@ -529,9 +641,9 @@ class Ship():
             xmax  = plaform[1] - (SHIP_SPRITE_SIZE - 9)
             yflat = plaform[2] - (SHIP_SPRITE_SIZE - 2)
 
-            if ((xmin<=self.xpos) and (self.xpos<=xmax) and ((self.ypos==yflat) or ((self.ypos-1)==yflat) or ((self.ypos-2)==yflat) or ((self.ypos-3)==yflat))  and  (self.angle<=SHIP_ANGLE_LAND or self.angle>=(360-SHIP_ANGLE_LAND)) ):
-                test_it = False
-                break
+            #if ((xmin<=self.xpos) and (self.xpos<=xmax) and ((self.ypos==yflat) or ((self.ypos-1)==yflat) or ((self.ypos-2)==yflat) or ((self.ypos-3)==yflat))  and  (self.angle<=SHIP_ANGLE_LAND or self.angle>=(360-SHIP_ANGLE_LAND)) ):
+            #    test_it = False
+            #    break
             if (self.shield and (xmin<=self.xpos) and (self.xpos<=xmax) and ((self.ypos==yflat) or ((self.ypos-1)==yflat) or ((self.ypos-2)==yflat) or ((self.ypos-3)==yflat) or ((self.ypos+1)==yflat)) and  (self.angle<=SHIP_ANGLE_LAND or self.angle>=(360-SHIP_ANGLE_LAND)) ):
                 test_it = False
                 break
@@ -557,10 +669,14 @@ class Ship():
         self.ax = 0.0
         self.ay = 0.0
 
+        self.impactx = 0.0
+        self.impacty = 0.0
+
         self.angle  = 0.0
         self.thrust = 0.0
         self.shield = False
         self.shoot  = False
+        self.shoot_delay = False
         self.landed = False
         self.bounce = False
         self.explod = False
@@ -568,6 +684,8 @@ class Ship():
         self.lives -= 1
 
         self.sound_thrust.stop()
+        self.sound_shoot.stop()
+        self.sound_shield.stop()
         self.sound_bounce.stop()
         self.sound_explod.play()
 
@@ -594,12 +712,31 @@ class Ship():
                 if map_buffer_mask.overlap(self.mask, offset): # https://stackoverflow.com/questions/55817422/collision-between-masks-in-pygame/55818093#55818093
                     self.explod = True
 
-    # TODO: fix that !
+    # 
     def collide_ship(self, ships):
         for ship in ships:
             if self != ship:
-                if math.sqrt( (ship.xpos - self.xpos)**2 + (ship.ypos - self.ypos)**2 ) < SHIP_SPRITE_SIZE:
+                offset = ((ship.xpos - self.xpos), (ship.ypos - self.ypos))
+                if self.mask.overlap(ship.mask, offset):
                     self.explod = True
+                    ship.explod = True
+
+    # 
+    def collide_shots(self, ships):
+        for ship in ships:
+            if self != ship:
+                for shot in self.shots:
+                    try:
+                        if ship.mask.get_at((shot.x - ship.xpos, shot.y - ship.ypos)):
+                            if not ship.shield:
+                                ship.explod = True
+                                return
+                            else:
+                                ship.impactx = shot.dx
+                                ship.impacty = shot.dy
+                    # out of ship mask => no collision
+                    except IndexError:
+                        pass
 
 # -------------------------------------------------------------------------------------------------
 
@@ -671,10 +808,10 @@ class Sequence():
 
             self.ships = []
             self.ship_1 = Ship(VIEW1_LEFT, VIEW1_TOP, VIEW1_WIDTH, VIEW1_HEIGHT, SHIP1_X, SHIP1_Y, \
-                               SHIP_1_PIC, SHIP_1_PIC_THRUST, SHIP_1_KEYS, SHIP_1_JOY, SHIP_MAX_LIVES - nb_dead)
+                               SHIP_1_PIC, SHIP_1_PIC_THRUST, SHIP_1_PIC_SHIELD, SHIP_1_KEYS, SHIP_1_JOY, SHIP_MAX_LIVES - nb_dead)
 
             self.ship_2 = Ship(VIEW2_LEFT, VIEW2_TOP, VIEW2_WIDTH, VIEW2_HEIGHT, SHIP2_X, SHIP2_Y, \
-                               SHIP_2_PIC, SHIP_2_PIC_THRUST, SHIP_2_KEYS, SHIP_2_JOY, SHIP_MAX_LIVES - nb_dead)
+                               SHIP_2_PIC, SHIP_2_PIC_THRUST, SHIP_2_PIC_SHIELD, SHIP_2_KEYS, SHIP_2_JOY, SHIP_MAX_LIVES - nb_dead)
 
             self.ships.append(self.ship_1)
             if NB_PLAYER > 1:
@@ -689,6 +826,8 @@ class Sequence():
             for ship in self.ships:
                 ship.sound_thrust.stop()
                 ship.sound_bounce.stop()
+                ship.sound_shield.stop()
+                ship.sound_shoot.stop()
                 ship.sound_explod.play()
 
             nb_dead += 1
@@ -726,13 +865,21 @@ class Sequence():
             for ship in self.ships:
                 ship.update(self)
 
-            # collide_map
+            # collide_map and ship tp ship
             for ship in self.ships:
                 ship.collide_map(self.game.map_buffer, self.game.map_buffer_mask)
-                ship.collide_ship(self.ships)
 
             for ship in self.ships:
-                # blit ship in the map
+                ship.collide_ship(self.ships)
+                
+            for ship in self.ships:
+                ship.plot_shots(self.game.map_buffer)
+
+            for ship in self.ships:
+                ship.collide_shots(self.ships)
+
+            # blit ship in the map
+            for ship in self.ships:
                 ship.draw(self.game.map_buffer)
 
             for ship in self.ships:
