@@ -395,7 +395,7 @@ class Ship():
 
             # record play ?
             if sequence.record_play:
-                sequence.played_data.append((left_pressed, right_pressed, thrust_pressed))
+                sequence.played_data.append((left_pressed, right_pressed, thrust_pressed, shield_pressed, shoot_pressed))
 
         # play recorded sequence
         else:
@@ -405,6 +405,8 @@ class Ship():
                 left_pressed   = True if data_i[0] else False
                 right_pressed  = True if data_i[1] else False
                 thrust_pressed = True if data_i[2] else False
+                shield_pressed = True if data_i[3] else False
+                shoot_pressed  = True if data_i[4] else False
             except:
                 print("End of playback")
                 print("Frames=", sequence.frames)
@@ -838,13 +840,16 @@ class Sequence():
             nb_dead += 1
 
             # record play ?
-            if self.record_play:
-                with open(self.record_play, "wb") as f:
-                    pickle.dump(self.played_data, f, protocol=pickle.HIGHEST_PROTOCOL)
-                time.sleep(0.1)
-                print("Frames=", self.frames)
-                print("%s seconds" % int(self.frames/MAX_FPS))
-                sys.exit(0)
+            self.record_it()
+
+    def record_it(self):
+        if self.record_play:
+            with open(self.record_play, "wb") as f:
+                pickle.dump(self.played_data, f, protocol=pickle.HIGHEST_PROTOCOL)
+            time.sleep(0.1)
+            print("Frames=", self.frames)
+            print("%s seconds" % int(self.frames/MAX_FPS))
+            sys.exit(0)
 
     def game_multiplayer_loop(self):
 
@@ -857,10 +862,12 @@ class Sequence():
             # pygame events
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
+                    self.record_it()
                     sys.exit(0)
 
                 elif event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
+                        self.record_it()
                         sys.exit(0)
 
             # map copy (TODO reduce)
