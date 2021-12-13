@@ -48,8 +48,6 @@ DEBUG_SCREEN = False # print debug info on the screen
 DEBUG_TEXT_XPOS = 0
 
 MAX_FPS = 60
-WIDTH   = 1280      # window width
-HEIGHT  = 800       # window height
 
 MAP_WIDTH  = 792
 MAP_HEIGHT = 1200
@@ -61,19 +59,9 @@ LVIOLET  = (128, 0, 128)
 # -------------------------------------------------------------------------------------------------
 # Player views
 
-NB_PLAYER = 2
-
-VIEW1_LEFT = 20     # X position in the window
-VIEW1_TOP  = 20     # Y position in the window
-VIEW1_WIDTH  = 600   # view width
-VIEW1_HEIGHT = 400   # view height
 SHIP1_X = 203        # ie left
 SHIP1_Y = 845        # ie top
 
-VIEW2_LEFT = 640     # X position in the window
-VIEW2_TOP  = 20      # Y position in the window
-VIEW2_WIDTH  = 600   # view width
-VIEW2_HEIGHT = 400   # view height
 SHIP2_X = 463        # ie left
 SHIP2_Y = 805        # ie top
 
@@ -292,7 +280,20 @@ class Shot():
 
 class Ship():
 
-    def __init__(self, view_left, view_top, view_width, view_height, xpos, ypos, ship_pic, ship_pic_thrust, ship_pic_shield, keys_mapping, joystick_number, lives):
+    def __init__(self, screen_width, screen_height, ship_number, nb_player, xpos, ypos, ship_pic, ship_pic_thrust, ship_pic_shield, keys_mapping, joystick_number, lives):
+
+        # TODO
+        self.view_width = 600
+        self.view_height = 400
+
+        if ship_number == 1:
+            self.view_left = 40
+            self.view_top = 40
+
+        elif ship_number == 2:
+            self.view_left = 40 + self.view_width + 100
+            self.view_top = 40
+
 
         self.init_xpos = xpos
         self.init_ypos = ypos
@@ -318,11 +319,6 @@ class Ship():
         self.landed = False
         self.bounce = False
         self.explod = False
-
-        self.view_left = view_left
-        self.view_top = view_top
-        self.view_width = view_width
-        self.view_height = view_height
 
         self.lives = lives
         self.shots = []
@@ -583,13 +579,22 @@ class Ship():
                 if (c.r != 0) or (c.g != 0) or (c.b != 0):
                     self.shots.remove(shot)
 
-                gfxdraw.pixel(map_buffer, int(shot.x) , int(shot.y), WHITE)
+                #gfxdraw.pixel(map_buffer, int(shot.x) , int(shot.y), WHITE)
+                pygame.draw.circle(map_buffer, WHITE, (int(shot.x) , int(shot.y)), 1)
                 #pygame.draw.line(map_buffer, WHITE, (int(self.xpos + SHIP_SPRITE_SIZE/2), int(self.ypos + SHIP_SPRITE_SIZE/2)), (int(shot.x), int(shot.y)))
-                #pygame.draw.line(map_buffer, WHITE, (int(shot.x), int(shot.y)), (int(shot.x), int(shot.y)))
 
             # out of surface
             except IndexError:
                 self.shots.remove(shot)
+
+        if 0:
+            for i in range(len(self.shots)):
+                try:
+                    shot1 = self.shots[i]
+                    shot2 = self.shots[i+1]
+                    pygame.draw.line(map_buffer, WHITE, (int(shot1.x), int(shot1.y)), (int(shot2.x), int(shot2.y)))
+                except IndexError:
+                    pass
 
     def add_shots(self):
         shot = Shot()
@@ -751,7 +756,8 @@ class Game():
         # Window
         self.game_width = game_width
         self.game_height = game_height
-        self.window = pygame.display.set_mode((game_width, game_height), pygame.DOUBLEBUF)
+        flags = pygame.DOUBLEBUF | pygame.SCALED | pygame.NOFRAME # | pygame.FULLSCREEN 
+        self.window = pygame.display.set_mode((game_width, game_height), flags)
 
         # Background
         self.map = pygame.image.load(MAP_1).convert() # .convert_alpha()
@@ -776,15 +782,19 @@ class Game():
 
 class Sequence():
     
-    def __init__(self, screen_width, screen_height, mode="game", motion="gravity", sensor="", record_play="", play_recorded=""):
+    def __init__(self, screen_width, screen_height, nb_player, mode="game", motion="gravity", sensor="", record_play="", play_recorded=""):
 
         self.myfont = pygame.font.SysFont('Arial', 20)
+
+        self.screen_width  = screen_width
+        self.screen_height = screen_height
+        self.nb_player = nb_player
 
         # screen
         self.game = Game(screen_width, screen_height)
         self.game.window.fill((0, 0, 0))
 
-        self.mode = mode # training or game
+        self.mode   = mode # training or game
         self.motion = motion # basic, thrust, gravity
         self.sensor = sensor
 
@@ -800,6 +810,7 @@ class Sequence():
 
         # FPS
         self.clock = pygame.time.Clock()
+        self.paused = False
         self.frames = 0
 
     def main_loop(self):
@@ -810,19 +821,19 @@ class Sequence():
         while True:
 
             self.ships = []
-            self.ship_1 = Ship(VIEW1_LEFT, VIEW1_TOP, VIEW1_WIDTH, VIEW1_HEIGHT, SHIP1_X, SHIP1_Y, \
+            self.ship_1 = Ship(self.screen_width, self.screen_height, 1, self.nb_player, SHIP1_X, SHIP1_Y, \
                                SHIP_1_PIC, SHIP_1_PIC_THRUST, SHIP_1_PIC_SHIELD, SHIP_1_KEYS, SHIP_1_JOY, SHIP_MAX_LIVES - nb_dead)
 
-            self.ship_2 = Ship(VIEW2_LEFT, VIEW2_TOP, VIEW2_WIDTH, VIEW2_HEIGHT, SHIP2_X, SHIP2_Y, \
+            self.ship_2 = Ship(self.screen_width, self.screen_height, 2, self.nb_player, SHIP2_X, SHIP2_Y, \
                                SHIP_2_PIC, SHIP_2_PIC_THRUST, SHIP_2_PIC_SHIELD, SHIP_2_KEYS, SHIP_2_JOY, SHIP_MAX_LIVES - nb_dead)
 
             self.ships.append(self.ship_1)
-            if NB_PLAYER > 1:
+            if self.nb_player > 1:
                 self.ships.append(self.ship_2)
 
             # ----- training_loop() exits when ship explods
             if self.mode == "training":
-                self.ship_1 = Ship(VIEW1_LEFT, VIEW1_TOP, VIEW1_WIDTH, VIEW1_HEIGHT, 430, 730, \
+                self.ship_1 = Ship(self.screen_width, self.screen_height, 1, 1, 430, 730, \
                                 SHIP_1_PIC, SHIP_1_PIC_THRUST, SHIP_1_PIC_SHIELD, SHIP_1_KEYS, SHIP_1_JOY, SHIP_MAX_LIVES - nb_dead)
 
                 self.training_loop(nb_dead)
@@ -856,9 +867,6 @@ class Sequence():
         # Game Main Loop
         while True:
 
-            # clear screen
-            self.game.window.fill((0,0,0))
-
             # pygame events
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
@@ -869,59 +877,78 @@ class Sequence():
                     if event.key == pygame.K_ESCAPE:
                         self.record_it()
                         sys.exit(0)
+                    elif event.key == pygame.K_p:
+                        self.paused = not self.paused
 
-            # map copy (TODO reduce)
-            self.game.map_buffer.blit(self.game.map, (0, 0))
+            if not self.paused:
 
-            # update ship pos
-            for ship in self.ships:
-                ship.update(self)
+                # clear screen
+                self.game.window.fill((0,0,0))
 
-            # collide_map and ship tp ship
-            for ship in self.ships:
-                ship.collide_map(self.game.map_buffer, self.game.map_buffer_mask)
+                # map copy (TODO reduce)
+                self.game.map_buffer.blit(self.game.map, (0, 0))
 
-            for ship in self.ships:
-                ship.collide_ship(self.ships)
-                
-            for ship in self.ships:
-                ship.plot_shots(self.game.map_buffer)
-
-            for ship in self.ships:
-                ship.collide_shots(self.ships)
-
-            # blit ship in the map
-            for ship in self.ships:
-                ship.draw(self.game.map_buffer)
-
-            for ship in self.ships:
-                # blit the map area around the ship on the screen
-                sub_area1 = Rect(ship.xpos - ship.view_width/2, ship.ypos - ship.view_height/2, ship.view_width, ship.view_height)
-                self.game.window.blit(self.game.map_buffer, (ship.view_left, ship.view_top), sub_area1)
-
-            # sensors
-            if self.sensor == "octo":
+                # update ship pos
                 for ship in self.ships:
-                    Sensors.octo(self.game, ship, fixed_radius=False)
-            if self.sensor == "octo_fixed":
+                    ship.update(self)
+
+                # collide_map and ship tp ship
                 for ship in self.ships:
-                    Sensors.octo(self.game, ship, fixed_radius=True)
-            elif self.sensor == "beam":
+                    ship.collide_map(self.game.map_buffer, self.game.map_buffer_mask)
+
                 for ship in self.ships:
-                    Sensors.beam(self.game, ship)
+                    ship.collide_ship(self.ships)
+                    
+                for ship in self.ships:
+                    ship.plot_shots(self.game.map_buffer)
 
-            for ship in self.ships:
-                if ship.explod:
-                    ship.reset()
+                for ship in self.ships:
+                    ship.collide_shots(self.ships)
 
-            # debug on screen
-            self.screen_print_info()
+                # blit ship in the map
+                for ship in self.ships:
+                    ship.draw(self.game.map_buffer)
 
-            # display
-            pygame.display.flip()
+                for ship in self.ships:
+                    # blit the map area around the ship on the screen
+                    rx = ship.xpos - ship.view_width/2
+                    ry = ship.ypos - ship.view_height/2
+                    if rx < 0:
+                        rx = 0
+                    elif rx > (MAP_WIDTH - ship.view_width):
+                        rx = (MAP_WIDTH - ship.view_width)
+                    if ry < 0:
+                        ry = 0
+                    elif ry > (MAP_HEIGHT - ship.view_height):
+                        ry = (MAP_HEIGHT - ship.view_height)
+
+                    sub_area1 = Rect(rx, ry, ship.view_width, ship.view_height)
+                    self.game.window.blit(self.game.map_buffer, (ship.view_left, ship.view_top), sub_area1)
+
+                # sensors
+                if self.sensor == "octo":
+                    for ship in self.ships:
+                        Sensors.octo(self.game, ship, fixed_radius=False)
+                if self.sensor == "octo_fixed":
+                    for ship in self.ships:
+                        Sensors.octo(self.game, ship, fixed_radius=True)
+                elif self.sensor == "beam":
+                    for ship in self.ships:
+                        Sensors.beam(self.game, ship)
+
+                for ship in self.ships:
+                    if ship.explod:
+                        ship.reset()
+
+                # debug on screen
+                self.screen_print_info()
+
+                # display
+                pygame.display.flip()
+                self.frames += 1
+
             self.clock.tick(MAX_FPS) # https://python-forum.io/thread-16692.html
 
-            self.frames += 1
             #print(self.clock.get_fps())
 
     def training_loop(self, nb_dead):
@@ -1019,6 +1046,11 @@ def run():
 
     # options
     parser = argparse.ArgumentParser()
+
+    parser.add_argument('-width', '--width', help='', type=int, action="store", default=1920)
+    parser.add_argument('-height', '--height', help='', type=int, action="store", default=1080)
+    parser.add_argument('-np', '--nb_player', help='', type=int, action="store", default=2)
+
     parser.add_argument('-m', '--motion', help='How the ship moves', action="store", default='gravity', choices=("basic", "thrust", "gravity"))
     parser.add_argument('-r', '--record_play', help='', action="store", default="")
     parser.add_argument('-pr', '--play_recorded', help='', action="store", default="")
@@ -1031,7 +1063,7 @@ def run():
     print("Args", args)
 
     # env
-    seq = Sequence(WIDTH, HEIGHT, mode=args["run_mode"], motion=args["motion"], sensor=args["sensor"], record_play=args["record_play"], play_recorded=args["play_recorded"])
+    seq = Sequence(args["width"], args["height"], args["nb_player"], mode=args["run_mode"], motion=args["motion"], sensor=args["sensor"], record_play=args["record_play"], play_recorded=args["play_recorded"])
     seq.main_loop()
 
 if __name__ == '__main__':
