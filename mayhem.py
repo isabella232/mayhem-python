@@ -21,6 +21,9 @@ anthony.prieur@gmail.com
 """
 Usage example:
 
+python mayhem.py --width=1500 --height=900 --nb_player=2 --sensor=beam -rm=game
+python mayhem.py --width=1500 --height=900 --nb_player=1 --sensor=beam -rm=training
+
 python3 mayhem.py --sensor=beam --motion=gravity
 python3 mayhem.py --sensor=octo --motion=gravity
 python3 mayhem.py --sensor=beam --motion=thrust
@@ -59,11 +62,17 @@ LVIOLET  = (128, 0, 128)
 # -------------------------------------------------------------------------------------------------
 # Player views
 
-SHIP1_X = 203        # ie left
-SHIP1_Y = 845        # ie top
+SHIP1_X = 473        # ie left
+SHIP1_Y = 303        # ie top
 
-SHIP2_X = 463        # ie left
-SHIP2_Y = 805        # ie top
+SHIP2_X = 520        # ie left
+SHIP2_Y = 955        # ie top
+
+SHIP3_X = 75         # ie left
+SHIP3_Y = 1015       # ie top
+
+SHIP4_X = 451        # ie left
+SHIP4_Y = 501        # ie top
 
 USE_MINI_MASK = True # mask the size of the ship (instead of the player view size)
 
@@ -114,11 +123,19 @@ PLATFORMS_1 = [ ( 464, 513, 333 ),
 
 SHIP_1_KEYS = {"left":pygame.K_LEFT, "right":pygame.K_RIGHT, "up":pygame.K_UP, "down":pygame.K_DOWN, \
                "thrust":pygame.K_KP_PERIOD, "shoot":pygame.K_KP_ENTER, "shield":pygame.K_KP0}
-SHIP_1_JOY = 0 # 0 means no joystick, =!0 means joystck number SHIP_1_JOY - 1
+SHIP_1_JOY  = 0 # 0 means no joystick, =!0 means joystck number SHIP_1_JOY - 1
 
 SHIP_2_KEYS = {"left":pygame.K_w, "right":pygame.K_x, "up":pygame.K_UP, "down":pygame.K_DOWN, \
                "thrust":pygame.K_v, "shoot":pygame.K_g, "shield":pygame.K_c}
-SHIP_2_JOY = 1 # 0 means no joystick, =!0 means joystck number SHIP_1_JOY - 1
+SHIP_2_JOY  = 1 # 0 means no joystick, =!0 means joystck number SHIP_1_JOY - 1
+
+SHIP_3_KEYS = {"left":pygame.K_w, "right":pygame.K_x, "up":pygame.K_UP, "down":pygame.K_DOWN, \
+               "thrust":pygame.K_v, "shoot":pygame.K_g, "shield":pygame.K_c}
+SHIP_3_JOY  = 2 # 0 means no joystick, =!0 means joystck number SHIP_1_JOY - 1
+
+SHIP_4_KEYS = {"left":pygame.K_w, "right":pygame.K_x, "up":pygame.K_UP, "down":pygame.K_DOWN, \
+               "thrust":pygame.K_v, "shoot":pygame.K_g, "shield":pygame.K_c}
+SHIP_4_JOY  = 0 # 0 means no joystick, =!0 means joystck number SHIP_1_JOY - 1
 
 # -------------------------------------------------------------------------------------------------
 # Assets
@@ -139,6 +156,14 @@ SHIP_2_PIC        = os.path.join("assets", "default", "ship2_256c.bmp")
 SHIP_2_PIC_THRUST = os.path.join("assets", "default", "ship2_thrust_256c.bmp")
 SHIP_2_PIC_SHIELD = os.path.join("assets", "default", "ship2_shield_256c.bmp")
 
+SHIP_3_PIC        = os.path.join("assets", "default", "ship3_256c.bmp")
+SHIP_3_PIC_THRUST = os.path.join("assets", "default", "ship3_thrust_256c.bmp")
+SHIP_3_PIC_SHIELD = os.path.join("assets", "default", "ship3_shield_256c.bmp")
+
+SHIP_4_PIC        = os.path.join("assets", "default", "ship4_256c.bmp")
+SHIP_4_PIC_THRUST = os.path.join("assets", "default", "ship4_thrust_256c.bmp")
+SHIP_4_PIC_SHIELD = os.path.join("assets", "default", "ship4_shield_256c.bmp")
+
 # -------------------------------------------------------------------------------------------------
 
 class Sensors():
@@ -148,8 +173,27 @@ class Sensors():
         # TODO use smaller map masks
         # TODO use only 0 to 90 degres beam mask quadran: https://github.com/Rabbid76/PyGameExamplesAndAnswers/blob/master/examples/minimal_examples/pygame_minimal_mask_intersect_surface_line_2.py
 
+        # clipping translation for window coordinates
+        rx = ship.xpos - ship.view_width/2
+        ry = ship.ypos - ship.view_height/2
+
+        dx = 0
+        dy = 0
+
+        if rx < 0:
+            dx = rx
+        elif rx > (MAP_WIDTH - ship.view_width):
+            dx = rx - (MAP_WIDTH - ship.view_width)
+        if ry < 0:
+            dy = ry
+        elif ry > (MAP_HEIGHT - ship.view_height):
+            dy = ry - (MAP_HEIGHT - ship.view_height)
+
+        #sub_area1 = Rect(rx, ry, ship.view_width, ship.view_height)
+        #self.game.window.blit(self.game.map_buffer, (ship.view_left, ship.view_top), sub_area1)
+
         # in window coord, center of the player view
-        ship_window_pos = (int(ship.view_width/2) + ship.view_left + SHIP_SPRITE_SIZE/2 , int(ship.view_height/2) + ship.view_top + SHIP_SPRITE_SIZE/2)
+        ship_window_pos = (int(ship.view_width/2) + ship.view_left + SHIP_SPRITE_SIZE/2 + dx, int(ship.view_height/2) + ship.view_top + SHIP_SPRITE_SIZE/2 + dy)
         #print("ship_window_pos", ship_window_pos)
 
         beam_surface_center = (int(BEAM_RADIUS/2), int(BEAM_RADIUS/2))
@@ -261,9 +305,25 @@ class Sensors():
         sensors_pos = [(SHIP_SPRITE_SIZE/2 - radius, SHIP_SPRITE_SIZE/2), (SHIP_SPRITE_SIZE/2 + radius, SHIP_SPRITE_SIZE/2), (SHIP_SPRITE_SIZE/2, SHIP_SPRITE_SIZE/2 - radius), (SHIP_SPRITE_SIZE/2, SHIP_SPRITE_SIZE/2 + radius), \
                        (SHIP_SPRITE_SIZE/2 - radius/1.4, SHIP_SPRITE_SIZE/2 - radius/1.4), (SHIP_SPRITE_SIZE/2 + radius/1.4, SHIP_SPRITE_SIZE/2 - radius/1.4), (SHIP_SPRITE_SIZE/2 - radius/1.4, SHIP_SPRITE_SIZE/2 + radius/1.4), (SHIP_SPRITE_SIZE/2 + radius/1.4, SHIP_SPRITE_SIZE/2 + radius/1.4)]
 
+        # clipping translation for window coordinates
+        rx = ship.xpos - ship.view_width/2
+        ry = ship.ypos - ship.view_height/2
+
+        dx = 0
+        dy = 0
+
+        if rx < 0:
+            dx = rx
+        elif rx > (MAP_WIDTH - ship.view_width):
+            dx = rx - (MAP_WIDTH - ship.view_width)
+        if ry < 0:
+            dy = ry
+        elif ry > (MAP_HEIGHT - ship.view_height):
+            dy = ry - (MAP_HEIGHT - ship.view_height)
+
         for i, s in enumerate(sensors_pos):
             #gfxdraw.pixel(surface, int(ship.view_width/2) + ship.view_left + int(s[0]) , int(ship.view_height/2) + ship.view_top + int(s[1]), colors[i])
-            pygame.draw.circle(game.window, colors[i], (int(ship.view_width/2) + ship.view_left + int(s[0]) , int(ship.view_height/2) + ship.view_top + int(s[1])), 2, width=0)
+            pygame.draw.circle(game.window, colors[i], (int(ship.view_width/2) + ship.view_left + int(s[0] + dx) , int(ship.view_height/2) + ship.view_top + int(s[1]) + dy), 2, width=0)
 
 # -------------------------------------------------------------------------------------------------
 
@@ -286,14 +346,28 @@ class Ship():
         self.view_width = 600
         self.view_height = 400
 
+        margin_size = 0
+        w_percent = 1.0
+        h_percent = 1.0
+
+        self.view_width  = int((screen_width * w_percent) / 2)
+        self.view_height = int((screen_height * h_percent) / 2)
+
         if ship_number == 1:
-            self.view_left = 40
-            self.view_top = 40
+            self.view_left = margin_size
+            self.view_top = margin_size
 
         elif ship_number == 2:
-            self.view_left = 40 + self.view_width + 100
-            self.view_top = 40
+            self.view_left = margin_size + self.view_width + margin_size
+            self.view_top = margin_size
 
+        elif ship_number == 3:
+            self.view_left = margin_size
+            self.view_top = margin_size + self.view_height + margin_size
+
+        elif ship_number == 4:
+            self.view_left = margin_size + self.view_width + margin_size
+            self.view_top = margin_size + self.view_height + margin_size
 
         self.init_xpos = xpos
         self.init_ypos = ypos
@@ -821,15 +895,26 @@ class Sequence():
         while True:
 
             self.ships = []
+
             self.ship_1 = Ship(self.screen_width, self.screen_height, 1, self.nb_player, SHIP1_X, SHIP1_Y, \
                                SHIP_1_PIC, SHIP_1_PIC_THRUST, SHIP_1_PIC_SHIELD, SHIP_1_KEYS, SHIP_1_JOY, SHIP_MAX_LIVES - nb_dead)
 
             self.ship_2 = Ship(self.screen_width, self.screen_height, 2, self.nb_player, SHIP2_X, SHIP2_Y, \
                                SHIP_2_PIC, SHIP_2_PIC_THRUST, SHIP_2_PIC_SHIELD, SHIP_2_KEYS, SHIP_2_JOY, SHIP_MAX_LIVES - nb_dead)
 
+            self.ship_3 = Ship(self.screen_width, self.screen_height, 3, self.nb_player, SHIP3_X, SHIP3_Y, \
+                               SHIP_3_PIC, SHIP_3_PIC_THRUST, SHIP_3_PIC_SHIELD, SHIP_3_KEYS, SHIP_3_JOY, SHIP_MAX_LIVES - nb_dead)
+
+            self.ship_4 = Ship(self.screen_width, self.screen_height, 4, self.nb_player, SHIP4_X, SHIP4_Y, \
+                               SHIP_4_PIC, SHIP_4_PIC_THRUST, SHIP_4_PIC_SHIELD, SHIP_4_KEYS, SHIP_4_JOY, SHIP_MAX_LIVES - nb_dead)
+
             self.ships.append(self.ship_1)
-            if self.nb_player > 1:
+            if self.nb_player >= 2:
                 self.ships.append(self.ship_2)
+            if self.nb_player >= 3:
+                self.ships.append(self.ship_3)
+            if self.nb_player >= 4:
+                self.ships.append(self.ship_4)
 
             # ----- training_loop() exits when ship explods
             if self.mode == "training":
@@ -910,7 +995,8 @@ class Sequence():
                     ship.draw(self.game.map_buffer)
 
                 for ship in self.ships:
-                    # blit the map area around the ship on the screen
+
+                    # clipping to avoid black when the ship is close to the edges
                     rx = ship.xpos - ship.view_width/2
                     ry = ship.ypos - ship.view_height/2
                     if rx < 0:
@@ -922,6 +1008,7 @@ class Sequence():
                     elif ry > (MAP_HEIGHT - ship.view_height):
                         ry = (MAP_HEIGHT - ship.view_height)
 
+                    # blit the map area around the ship on the screen
                     sub_area1 = Rect(rx, ry, ship.view_width, ship.view_height)
                     self.game.window.blit(self.game.map_buffer, (ship.view_left, ship.view_top), sub_area1)
 
@@ -942,6 +1029,10 @@ class Sequence():
 
                 # debug on screen
                 self.screen_print_info()
+
+                cv = (225, 225, 225)
+                pygame.draw.line( self.game.window, cv, (0, int(self.screen_height/2)), (self.screen_width, int(self.screen_height/2)) )
+                pygame.draw.line( self.game.window, cv, (int(self.screen_width/2), 0), (int(self.screen_width/2), (self.screen_height)) )
 
                 # display
                 pygame.display.flip()
@@ -980,8 +1071,20 @@ class Sequence():
             # blit ship in the map
             self.ship_1.draw(self.game.map_buffer)
 
+            # clipping to avoid black when the ship is close to the edges
+            rx = self.ship_1.xpos - self.ship_1.view_width/2
+            ry = self.ship_1.ypos - self.ship_1.view_height/2
+            if rx < 0:
+                rx = 0
+            elif rx > (MAP_WIDTH - self.ship_1.view_width):
+                rx = (MAP_WIDTH - self.ship_1.view_width)
+            if ry < 0:
+                ry = 0
+            elif ry > (MAP_HEIGHT - self.ship_1.view_height):
+                ry = (MAP_HEIGHT - self.ship_1.view_height)
+
             # blit the map area around the ship on the screen
-            sub_area1 = Rect(self.ship_1.xpos - self.ship_1.view_width/2, self.ship_1.ypos - self.ship_1.view_height/2, self.ship_1.view_width, self.ship_1.view_height)
+            sub_area1 = Rect(rx, ry, self.ship_1.view_width, self.ship_1.view_height)
             self.game.window.blit(self.game.map_buffer, (self.ship_1.view_left, self.ship_1.view_top), sub_area1)
 
             # sensors
