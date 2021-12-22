@@ -21,19 +21,19 @@ anthony.prieur@gmail.com
 """
 Usage example:
 
-python mayhem.py --width=1500 --height=900 --nb_player=2 --sensor=beam -rm=game
-python mayhem.py --width=1500 --height=900 --nb_player=1 --sensor=beam -rm=training
+python mayhem.py --width=1500 --height=900 --nb_player=2 --sensor=ray -rm=game
+python mayhem.py --width=1500 --height=900 --nb_player=1 --sensor=ray -rm=training
 
-python3 mayhem.py --sensor=beam --motion=gravity
-python3 mayhem.py --sensor=octo --motion=gravity
-python3 mayhem.py --sensor=beam --motion=thrust
+python3 mayhem.py --sensor=ray --motion=gravity
+python3 mayhem.py --sensor=ray --motion=thrust
 python3 mayhem.py --motion=thrust
 python3 mayhem.py -r=played1.dat --motion=gravity
 python3 mayhem.py -pr=played1.dat --motion=gravity
 """
 
-import os, sys, argparse, random, math, time
+import os, sys, argparse, random, math, time, multiprocessing
 from random import randint
+import numpy as np
 
 import pygame
 from pygame.locals import *
@@ -44,10 +44,16 @@ try:
 except ImportError:
     import pickle
 
+try:
+    import neat
+    NEAT_FOUND = True
+except ImportError:
+    NEAT_FOUND = False
+
 # -------------------------------------------------------------------------------------------------
 # General
 
-DEBUG_SCREEN = False # print debug info on the screen
+DEBUG_SCREEN = 1 # print debug info on the screen
 DEBUG_TEXT_XPOS = 0
 
 MAX_FPS = 60
@@ -77,11 +83,11 @@ SHIP4_Y = 501        # ie top
 USE_MINI_MASK = True # mask the size of the ship (instead of the player view size)
 
 # -------------------------------------------------------------------------------------------------
-# Sensors
+# Sensor
 
-BEAM_AMGLE_STEP = 30
-BEAM_RADIUS = 400
-BEAM_SURFACE = pygame.Surface((BEAM_RADIUS, BEAM_RADIUS))
+RAY_AMGLE_STEP = 45
+RAY_BOX_SIZE   = 400
+RAY_MAX_LEN    = ((RAY_BOX_SIZE/2) * math.sqrt(2)) # for now we are at the center of the ray mask box
 
 # -------------------------------------------------------------------------------------------------
 # SHIP dynamics
@@ -165,166 +171,13 @@ SHIP_4_PIC_THRUST = os.path.join("assets", "default", "ship4_thrust_256c.bmp")
 SHIP_4_PIC_SHIELD = os.path.join("assets", "default", "ship4_shield_256c.bmp")
 
 # -------------------------------------------------------------------------------------------------
+# Training
 
-class Sensors():
+START_POSITIONS = [(430, 730), (473, 195), (647, 227), (645, 600), (647, 950), (510, 1070), (298, 1037), \
+                   (273, 777), (275, 506), (70, 513), (89, 208), (434, 452), (289, 153)]
 
-    @staticmethod
-    def beam(game, ship):
-        # TODO use smaller map masks
-        # TODO use only 0 to 90 degres beam mask quadran: https://github.com/Rabbid76/PyGameExamplesAndAnswers/blob/master/examples/minimal_examples/pygame_minimal_mask_intersect_surface_line_2.py
-
-        # clipping translation for window coordinates
-        rx = ship.xpos - ship.view_width/2
-        ry = ship.ypos - ship.view_height/2
-
-        dx = 0
-        dy = 0
-
-        if rx < 0:
-            dx = rx
-        elif rx > (MAP_WIDTH - ship.view_width):
-            dx = rx - (MAP_WIDTH - ship.view_width)
-        if ry < 0:
-            dy = ry
-        elif ry > (MAP_HEIGHT - ship.view_height):
-            dy = ry - (MAP_HEIGHT - ship.view_height)
-
-        #sub_area1 = Rect(rx, ry, ship.view_width, ship.view_height)
-        #self.game.window.blit(self.game.map_buffer, (ship.view_left, ship.view_top), sub_area1)
-
-        # in window coord, center of the player view
-        ship_window_pos = (int(ship.view_width/2) + ship.view_left + SHIP_SPRITE_SIZE/2 + dx, int(ship.view_height/2) + ship.view_top + SHIP_SPRITE_SIZE/2 + dy)
-        #print("ship_window_pos", ship_window_pos)
-
-        beam_surface_center = (int(BEAM_RADIUS/2), int(BEAM_RADIUS/2))
-
-        # 30 degres step
-        for angle in range(0, 359, BEAM_AMGLE_STEP):
-
-            c = math.cos(math.radians(angle))
-            s = math.sin(math.radians(angle))
-
-            flip_x = c < 0
-            flip_y = s < 0
-
-            filpped_map_mask = game.flipped_masks_map_buffer[flip_x][flip_y]
-
-            # beam final point
-            x_dest = beam_surface_center[0] + BEAM_RADIUS * abs(c)
-            y_dest = beam_surface_center[1] + BEAM_RADIUS * abs(s)
-
-            BEAM_SURFACE.fill((0, 0, 0))
-            BEAM_SURFACE.set_colorkey((0, 0, 0))
-            pygame.draw.line(BEAM_SURFACE, WHITE, beam_surface_center, (x_dest, y_dest))
-            beam_mask = pygame.mask.from_surface(BEAM_SURFACE)
-            pygame.draw.circle(BEAM_SURFACE, RED, beam_surface_center, 3)
-
-            # offset = beam mask (left/top) coordinate in the map (ie where to put our lines mask in the map)
-            if flip_x:
-                offset_x = MAP_WIDTH - (ship.xpos+SHIP_SPRITE_SIZE/2) - int(BEAM_RADIUS/2)
-            else:
-                offset_x = ship.xpos+SHIP_SPRITE_SIZE/2 - int(BEAM_RADIUS/2)
-
-            if flip_y:
-                offset_y = MAP_HEIGHT - (ship.ypos+SHIP_SPRITE_SIZE/2) - int(BEAM_RADIUS/2)
-            else:
-                offset_y = ship.ypos+SHIP_SPRITE_SIZE/2 - int(BEAM_RADIUS/2)
-
-            #print("offset", offset_x, offset_y)
-            hit = filpped_map_mask.overlap(beam_mask, (int(offset_x), int(offset_y)))
-            #print("hit", hit)
-
-            if hit is not None and (hit[0] != ship.xpos+SHIP_SPRITE_SIZE/2 or hit[1] != ship.ypos+SHIP_SPRITE_SIZE/2):
-                hx = MAP_WIDTH-1 - hit[0] if flip_x else hit[0]
-                hy = MAP_HEIGHT-1 - hit[1] if flip_y else hit[1]
-                hit = (hx, hy)
-                #print("new hit", hit)
-
-                # go back to screen coordinates
-                dx_hit = hit[0] - (ship.xpos+SHIP_SPRITE_SIZE/2)
-                dy_hit = hit[1] - (ship.ypos+SHIP_SPRITE_SIZE/2)
-
-                pygame.draw.line(game.window, LVIOLET, ship_window_pos, (ship_window_pos[0] + dx_hit, ship_window_pos[1] + dy_hit))
-                #pygame.draw.circle(map, RED, hit, 2)
-
-                # Note: this is the distance from the center of the ship, not the borders
-                dist_wall = math.sqrt(dx_hit**2 + dy_hit**2)
-                # so remove
-                dist_wall -= (SHIP_SPRITE_SIZE/2 - 1)
-
-            # Not hit: too far
-            else:
-                dist_wall = (BEAM_RADIUS/2) * math.sqrt(2)
-
-            if dist_wall < 0:
-                dist_wall = 0
-
-            #print("Sensor for angle=%s, dist wall=%.2f" % (str(angle), dist_wall))
-
-            #game.window.blit(BEAM_SURFACE, (ship.view_left + ship.view_width, ship.view_top))
-            #map.blit(BEAM_SURFACE, (int(offset_x), int(offset_y)))
-
-    @staticmethod
-    def octo(game, ship, fixed_radius=False):
-
-        # Note: with an adaptative radius the ANN would need to also know vx and vy in adition to the 8 sensors values
-        if not fixed_radius:
-            radius = int(SHIP_SPRITE_SIZE * 1.5)
-            radius += 12 * math.sqrt( math.pow(ship.vx, 2) + math.pow(ship.vy, 2) )
-        else:
-            radius = int(SHIP_SPRITE_SIZE * 2)
-
-        # follow V vector or fixed in the grid ?
-        slx, sly  = (ship.xpos + SHIP_SPRITE_SIZE/2) - radius, (ship.ypos + SHIP_SPRITE_SIZE/2)
-        srx, sry  = (ship.xpos + SHIP_SPRITE_SIZE/2) + radius, (ship.ypos + SHIP_SPRITE_SIZE/2)
-        sux, suy  = (ship.xpos + SHIP_SPRITE_SIZE/2), (ship.ypos + SHIP_SPRITE_SIZE/2) - radius
-        sdx, sdy  = (ship.xpos + SHIP_SPRITE_SIZE/2), (ship.ypos + SHIP_SPRITE_SIZE/2) + radius
-
-        sulx, suly  = (ship.xpos + SHIP_SPRITE_SIZE/2) - radius/1.4, (ship.ypos + SHIP_SPRITE_SIZE/2) - radius/1.4
-        surx, sury  = (ship.xpos + SHIP_SPRITE_SIZE/2) + radius/1.4, (ship.ypos + SHIP_SPRITE_SIZE/2) - radius/1.4
-        sdlx, sdly  = (ship.xpos + SHIP_SPRITE_SIZE/2) - radius/1.4, (ship.ypos + SHIP_SPRITE_SIZE/2) + radius/1.4
-        sdrx, sdry  = (ship.xpos + SHIP_SPRITE_SIZE/2) + radius/1.4, (ship.ypos + SHIP_SPRITE_SIZE/2) + radius/1.4
-
-        # position for game.map for the collsion mask
-        sensors_pos = [(slx, sly), (srx, sry), (sux, suy), (sdx, sdy), \
-                       (sulx, suly), (surx, sury), (sdlx, sdly), (sdrx, sdry)]
-
-        colors = []
-
-        # collision
-        for s in sensors_pos:
-            try:
-                color = RED if game.map_buffer_mask.get_at((int(s[0]), int(s[1]))) else WHITE
-            # out of bound => no collision
-            except:
-                color = WHITE
-
-            colors.append(color)
-
-        # display the sensor (relocate the position for game.window)
-        sensors_pos = [(SHIP_SPRITE_SIZE/2 - radius, SHIP_SPRITE_SIZE/2), (SHIP_SPRITE_SIZE/2 + radius, SHIP_SPRITE_SIZE/2), (SHIP_SPRITE_SIZE/2, SHIP_SPRITE_SIZE/2 - radius), (SHIP_SPRITE_SIZE/2, SHIP_SPRITE_SIZE/2 + radius), \
-                       (SHIP_SPRITE_SIZE/2 - radius/1.4, SHIP_SPRITE_SIZE/2 - radius/1.4), (SHIP_SPRITE_SIZE/2 + radius/1.4, SHIP_SPRITE_SIZE/2 - radius/1.4), (SHIP_SPRITE_SIZE/2 - radius/1.4, SHIP_SPRITE_SIZE/2 + radius/1.4), (SHIP_SPRITE_SIZE/2 + radius/1.4, SHIP_SPRITE_SIZE/2 + radius/1.4)]
-
-        # clipping translation for window coordinates
-        rx = ship.xpos - ship.view_width/2
-        ry = ship.ypos - ship.view_height/2
-
-        dx = 0
-        dy = 0
-
-        if rx < 0:
-            dx = rx
-        elif rx > (MAP_WIDTH - ship.view_width):
-            dx = rx - (MAP_WIDTH - ship.view_width)
-        if ry < 0:
-            dy = ry
-        elif ry > (MAP_HEIGHT - ship.view_height):
-            dy = ry - (MAP_HEIGHT - ship.view_height)
-
-        for i, s in enumerate(sensors_pos):
-            #gfxdraw.pixel(surface, int(ship.view_width/2) + ship.view_left + int(s[0]) , int(ship.view_height/2) + ship.view_top + int(s[1]), colors[i])
-            pygame.draw.circle(game.window, colors[i], (int(ship.view_width/2) + ship.view_left + int(s[0] + dx) , int(ship.view_height/2) + ship.view_top + int(s[1]) + dy), 2, width=0)
-
+# -------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------------------------
 
 class Shot():
@@ -337,37 +190,41 @@ class Shot():
         self.dy = 0
 
 # -------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 
 class Ship():
 
-    def __init__(self, screen_width, screen_height, ship_number, nb_player, xpos, ypos, ship_pic, ship_pic_thrust, ship_pic_shield, keys_mapping, joystick_number, lives):
-
-        # TODO
-        self.view_width = 600
-        self.view_height = 400
+    def __init__(self, mode, screen_width, screen_height, ship_number, nb_player, xpos, ypos, ship_pic, ship_pic_thrust, ship_pic_shield, keys_mapping, joystick_number, lives):
 
         margin_size = 0
         w_percent = 1.0
         h_percent = 1.0
 
-        self.view_width  = int((screen_width * w_percent) / 2)
-        self.view_height = int((screen_height * h_percent) / 2)
-
-        if ship_number == 1:
+        if mode == "training":
+            self.view_width = screen_width
+            self.view_height = screen_height
             self.view_left = margin_size
             self.view_top = margin_size
+        else:
+            self.view_width  = int((screen_width * w_percent) / 2)
+            self.view_height = int((screen_height * h_percent) / 2)
 
-        elif ship_number == 2:
-            self.view_left = margin_size + self.view_width + margin_size
-            self.view_top = margin_size
+            if ship_number == 1:
+                self.view_left = margin_size
+                self.view_top = margin_size
 
-        elif ship_number == 3:
-            self.view_left = margin_size
-            self.view_top = margin_size + self.view_height + margin_size
+            elif ship_number == 2:
+                self.view_left = margin_size + self.view_width + margin_size
+                self.view_top = margin_size
 
-        elif ship_number == 4:
-            self.view_left = margin_size + self.view_width + margin_size
-            self.view_top = margin_size + self.view_height + margin_size
+            elif ship_number == 3:
+                self.view_left = margin_size
+                self.view_top = margin_size + self.view_height + margin_size
+
+            elif ship_number == 4:
+                self.view_left = margin_size + self.view_width + margin_size
+                self.view_top = margin_size + self.view_height + margin_size
 
         self.init_xpos = xpos
         self.init_ypos = ypos
@@ -418,10 +275,52 @@ class Ship():
         self.keys_mapping = keys_mapping
         self.joystick_number = joystick_number
 
-    def update(self, sequence):
+        self.ray_surface = pygame.Surface((RAY_BOX_SIZE, RAY_BOX_SIZE))
+
+    def step(self, env, action):
+
+        if not env.play_recorded:
+            left_pressed   = False
+            right_pressed  = False
+            thrust_pressed = False
+            up_pressed     = False
+            down_pressed   = False
+            shoot_pressed  = False
+            shield_pressed = False
+
+            if action == 1:
+                left_pressed = True
+            if action == 2:
+                right_pressed = True
+            if action == 3:
+                thrust_pressed = True
+
+            # record play ?
+            if env.record_play:
+                env.played_data.append((left_pressed, right_pressed, thrust_pressed, shield_pressed, shoot_pressed))
+
+        # play recorded
+        else:
+            try:
+                data_i = env.played_data[env.frames]
+
+                left_pressed   = True if data_i[0] else False
+                right_pressed  = True if data_i[1] else False
+                thrust_pressed = True if data_i[2] else False
+                shield_pressed = True if data_i[3] else False
+                shoot_pressed  = True if data_i[4] else False
+            except:
+                print("End of playback")
+                print("Frames=", env.frames)
+                print("%s seconds" % int(env.frames/MAX_FPS))
+                sys.exit(0)
+
+        self.do_move(env, left_pressed, right_pressed, up_pressed, down_pressed, thrust_pressed, shoot_pressed, shield_pressed)
+
+    def update(self, env):
 
         # normal play
-        if not sequence.play_recorded:
+        if not env.play_recorded:
             keys = pygame.key.get_pressed()
 
             left_pressed   = keys[self.keys_mapping["left"]]
@@ -464,13 +363,13 @@ class Ship():
                     pass
 
             # record play ?
-            if sequence.record_play:
-                sequence.played_data.append((left_pressed, right_pressed, thrust_pressed, shield_pressed, shoot_pressed))
+            if env.record_play:
+                env.played_data.append((left_pressed, right_pressed, thrust_pressed, shield_pressed, shoot_pressed))
 
-        # play recorded sequence
+        # play recorded
         else:
             try:
-                data_i = sequence.played_data[sequence.frames]
+                data_i = env.played_data[env.frames]
 
                 left_pressed   = True if data_i[0] else False
                 right_pressed  = True if data_i[1] else False
@@ -479,11 +378,24 @@ class Ship():
                 shoot_pressed  = True if data_i[4] else False
             except:
                 print("End of playback")
-                print("Frames=", sequence.frames)
-                print("%s seconds" % int(sequence.frames/MAX_FPS))
+                print("Frames=", env.frames)
+                print("%s seconds" % int(env.frames/MAX_FPS))
                 sys.exit(0)
 
-        if sequence.motion == "basic":
+
+            left_pressed   = keys[self.keys_mapping["left"]]
+            right_pressed  = keys[self.keys_mapping["right"]]
+            up_pressed     = keys[self.keys_mapping["up"]]
+            down_pressed   = keys[self.keys_mapping["down"]]
+            thrust_pressed = keys[self.keys_mapping["thrust"]]
+            shoot_pressed  = keys[self.keys_mapping["shoot"]]
+            shield_pressed = keys[self.keys_mapping["shield"]]
+
+        self.do_move(env, left_pressed, right_pressed, up_pressed, down_pressed, thrust_pressed, shoot_pressed, shield_pressed)
+
+    def do_move(self, env, left_pressed, right_pressed, up_pressed, down_pressed, thrust_pressed, shoot_pressed, shield_pressed):
+
+        if env.motion == "basic":
 
             # pic
             if left_pressed or right_pressed or up_pressed or down_pressed:
@@ -506,7 +418,7 @@ class Ship():
             self.xpos += dx
             self.ypos += dy
 
-        elif sequence.motion == "thrust":
+        elif env.motion == "thrust":
 
             # pic
             if thrust_pressed:
@@ -531,7 +443,7 @@ class Ship():
                 self.xpos = int(self.xposprecise)
                 self.ypos = int(self.yposprecise)
 
-        elif sequence.motion == "gravity":
+        elif env.motion == "gravity":
     
             self.image = self.ship_pic
             self.thrust = 0.0
@@ -541,13 +453,16 @@ class Ship():
             if shield_pressed:
                 self.image = self.ship_pic_shield
                 self.shield = True
-                self.sound_thrust.stop()
+                if env.render:
+                    self.sound_thrust.stop()
 
-                if not pygame.mixer.get_busy():
-                    self.sound_shield.play(-1)
+                if env.render:
+                    if not pygame.mixer.get_busy():
+                        self.sound_shield.play(-1)
             else:
                 self.shield = False
-                self.sound_shield.stop()
+                if env.render:
+                    self.sound_shield.stop()
 
                 # thrust
                 if thrust_pressed:
@@ -557,14 +472,16 @@ class Ship():
                     #if self.thrust >= SHIP_THRUST_MAX:
                     self.thrust = SHIP_THRUST_MAX
 
-                    if not pygame.mixer.get_busy():
-                        self.sound_thrust.play(-1)
+                    if env.render:
+                        if not pygame.mixer.get_busy():
+                            self.sound_thrust.play(-1)
 
                     self.landed = False
 
                 else:
                     self.thrust = 0.0
-                    self.sound_thrust.stop()
+                    if env.render:
+                        self.sound_thrust.stop()
 
             # shoot delay
             if shoot_pressed and not self.shoot:
@@ -578,13 +495,15 @@ class Ship():
 
                 if self.shoot_delay:
                     if len(self.shots) < MAX_SHOOT:
-                        if not pygame.mixer.get_busy():
-                            self.sound_shoot.play()
+                        if env.render:
+                            if not pygame.mixer.get_busy():
+                                self.sound_shoot.play()
 
                         self.add_shots()
             else:
                 self.shoot = False
-                self.sound_shoot.stop()
+                if env.render:
+                    self.sound_shoot.stop()
 
             #
             self.bounce = False
@@ -630,7 +549,8 @@ class Ship():
             self.ypos = int(self.yposprecise)
 
             # landed ?
-            self.is_landed()
+            if env.mode != "training": # at the moment no landing in training (because NEAT algo is too lazy !)
+                self.is_landed(env)
 
         #
         # rotate
@@ -684,7 +604,7 @@ class Ship():
 
         self.shots.append(shot)
 
-    def is_landed(self):
+    def is_landed(self, env):
 
         for plaform in PLATFORMS_1:
             xmin  = plaform[0] - (SHIP_SPRITE_SIZE - 23)
@@ -708,7 +628,8 @@ class Ship():
                     self.bounce = False
                 else:
                     self.bounce = True
-                    self.sound_bounce.play()
+                    if env.render:
+                        self.sound_bounce.play()
 
                 return True
 
@@ -738,9 +659,12 @@ class Ship():
         #game_window.blit(self.image_rotated, (self.view_width/2 + self.view_left + self.rot_xoffset, self.view_height/2 + self.view_top + self.rot_yoffset))
         map_buffer.blit(self.image_rotated, (self.xpos + self.rot_xoffset, self.ypos + self.rot_yoffset))
 
-    def reset(self):
-        self.xpos = self.init_xpos
-        self.ypos = self.init_ypos
+    def reset(self, env):
+        if env.mode == "training" and 0:
+            self.xpos, self.ypos = random.choice(START_POSITIONS)
+        else:
+            self.xpos = self.init_xpos
+            self.ypos = self.init_ypos
 
         self.xposprecise = self.xpos
         self.yposprecise = self.ypos
@@ -764,11 +688,12 @@ class Ship():
 
         self.lives -= 1
 
-        self.sound_thrust.stop()
-        self.sound_shoot.stop()
-        self.sound_shield.stop()
-        self.sound_bounce.stop()
-        self.sound_explod.play()
+        if env.render:
+            self.sound_thrust.stop()
+            self.sound_shoot.stop()
+            self.sound_shield.stop()
+            self.sound_bounce.stop()
+            self.sound_explod.play()
 
     def collide_map(self, map_buffer, map_buffer_mask):
 
@@ -819,53 +744,126 @@ class Ship():
                     except IndexError:
                         pass
 
+    def ray_sensor(self, env, render=True):
+        # TODO use smaller map masks
+        # TODO use only 0 to 90 degres ray mask quadran: https://github.com/Rabbid76/PyGameExamplesAndAnswers/blob/master/examples/minimal_examples/pygame_minimal_mask_intersect_surface_line_2.py
+
+        # clipping translation for window coordinates
+        rx = self.xpos - self.view_width/2
+        ry = self.ypos - self.view_height/2
+
+        dx = 0
+        dy = 0
+
+        if rx < 0:
+            dx = rx
+        elif rx > (MAP_WIDTH - self.view_width):
+            dx = rx - (MAP_WIDTH - self.view_width)
+        if ry < 0:
+            dy = ry
+        elif ry > (MAP_HEIGHT - self.view_height):
+            dy = ry - (MAP_HEIGHT - self.view_height)
+
+        #sub_area1 = Rect(rx, ry, self.view_width, self.view_height)
+        #self.env.game.window.blit(self.env.game.map_buffer, (self.view_left, self.view_top), sub_area1)
+
+        # in window coord, center of the player view
+        ship_window_pos = (int(self.view_width/2) + self.view_left + SHIP_SPRITE_SIZE/2 + dx, int(self.view_height/2) + self.view_top + SHIP_SPRITE_SIZE/2 + dy)
+        #print("ship_window_pos", ship_window_pos)
+
+        ray_surface_center = (int(RAY_BOX_SIZE/2), int(RAY_BOX_SIZE/2))
+
+        wall_distances = []
+
+        # 30 degres step
+        for angle in range(0, 359, RAY_AMGLE_STEP):
+
+            c = math.cos(math.radians(angle))
+            s = math.sin(math.radians(angle))
+
+            flip_x = c < 0
+            flip_y = s < 0
+
+            filpped_map_mask = env.game.flipped_masks_map_buffer[flip_x][flip_y]
+
+            # ray final point
+            x_dest = ray_surface_center[0] + RAY_BOX_SIZE/2 * abs(c)
+            y_dest = ray_surface_center[1] + RAY_BOX_SIZE/2 * abs(s)
+
+            #x_dest = ray_surface_center[0] + RAY_BOX_SIZE * abs(c)
+            #y_dest = ray_surface_center[1] + RAY_BOX_SIZE * abs(s)
+
+            self.ray_surface.fill((0, 0, 0))
+            self.ray_surface.set_colorkey((0, 0, 0))
+            pygame.draw.line(self.ray_surface, WHITE, ray_surface_center, (x_dest, y_dest))
+            ray_mask = pygame.mask.from_surface(self.ray_surface)
+            pygame.draw.circle(self.ray_surface, RED, ray_surface_center, 3)
+
+            # offset = ray mask (left/top) coordinate in the map (ie where to put our lines mask in the map)
+            if flip_x:
+                offset_x = MAP_WIDTH - (self.xpos+SHIP_SPRITE_SIZE/2) - int(RAY_BOX_SIZE/2)
+            else:
+                offset_x = self.xpos+SHIP_SPRITE_SIZE/2 - int(RAY_BOX_SIZE/2)
+
+            if flip_y:
+                offset_y = MAP_HEIGHT - (self.ypos+SHIP_SPRITE_SIZE/2) - int(RAY_BOX_SIZE/2)
+            else:
+                offset_y = self.ypos+SHIP_SPRITE_SIZE/2 - int(RAY_BOX_SIZE/2)
+
+            #print("offset", offset_x, offset_y)
+            hit = filpped_map_mask.overlap(ray_mask, (int(offset_x), int(offset_y)))
+            #print("hit", hit)
+
+            if hit is not None and (hit[0] != self.xpos+SHIP_SPRITE_SIZE/2 or hit[1] != self.ypos+SHIP_SPRITE_SIZE/2):
+                hx = MAP_WIDTH-1 - hit[0] if flip_x else hit[0]
+                hy = MAP_HEIGHT-1 - hit[1] if flip_y else hit[1]
+                hit = (hx, hy)
+                #print("new hit", hit)
+
+                # go back to screen coordinates
+                dx_hit = hit[0] - (self.xpos+SHIP_SPRITE_SIZE/2)
+                dy_hit = hit[1] - (self.ypos+SHIP_SPRITE_SIZE/2)
+
+                if render:
+                    pygame.draw.line(env.game.window, LVIOLET, ship_window_pos, (ship_window_pos[0] + dx_hit, ship_window_pos[1] + dy_hit))
+                    #pygame.draw.circle(map, RED, hit, 2)
+
+                # Note: this is the distance from the center of the ship, not the borders
+                dist_wall = math.sqrt(dx_hit**2 + dy_hit**2)
+                # so remove
+                dist_wall -= (SHIP_SPRITE_SIZE/2 - 1)
+
+            # Not hit: too far
+            else:
+                dist_wall = RAY_MAX_LEN
+
+            if dist_wall < 0:
+                dist_wall = 0
+
+            wall_distances.append(dist_wall / RAY_MAX_LEN) # normalize
+
+            #print("Sensor for angle=%s, dist wall=%.2f" % (str(angle), dist_wall))
+
+            #env.game.window.blit(RAY_SURFACE, (self.view_left + self.view_width, self.view_top))
+            #map.blit(RAY_SURFACE, (int(offset_x), int(offset_y)))
+
+        return wall_distances
+
+# -------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------------------------
 
-class Game():
-
-    def __init__(self, game_width, game_height):
-
-        pygame.display.set_caption('Mayhem')
-
-        # Window
-        self.game_width = game_width
-        self.game_height = game_height
-        flags = pygame.DOUBLEBUF | pygame.SCALED | pygame.NOFRAME # | pygame.FULLSCREEN 
-        self.window = pygame.display.set_mode((game_width, game_height), flags)
-
-        # Background
-        self.map = pygame.image.load(MAP_1).convert() # .convert_alpha()
-        #self.map.set_colorkey( (0, 0, 0) ) # used for the mask, black = background
-        #self.map_rect = self.map.get_rect()
-        #self.map_mask = pygame.mask.from_surface(self.map)
-        #self.mask_map_fx = pygame.mask.from_surface(pygame.transform.flip(self.map, True, False))
-        #self.mask_map_fy = pygame.mask.from_surface(pygame.transform.flip(self.map, False, True))
-        #self.mask_map_fx_fy = pygame.mask.from_surface(pygame.transform.flip(self.map, True, True))
-        #self.flipped_masks = [[self.map_mask, self.mask_map_fy], [self.mask_map_fx, self.mask_map_fx_fy]]
-
-        self.map_buffer = self.map.copy() # pygame.Surface((self.map.get_width(), self.map.get_height()))
-
-        self.map_buffer.set_colorkey( (0, 0, 0) )
-        self.map_buffer_mask = pygame.mask.from_surface(self.map_buffer)
-        self.mask_map_buffer_fx = pygame.mask.from_surface(pygame.transform.flip(self.map_buffer, True, False))
-        self.mask_map_buffer_fy = pygame.mask.from_surface(pygame.transform.flip(self.map_buffer, False, True))
-        self.mask_map_buffer_fx_fy = pygame.mask.from_surface(pygame.transform.flip(self.map_buffer, True, True))
-        self.flipped_masks_map_buffer = [[self.map_buffer_mask, self.mask_map_buffer_fy], [self.mask_map_buffer_fx, self.mask_map_buffer_fx_fy]]
-
-# -------------------------------------------------------------------------------------------------
-
-class Sequence():
+class MayhemEnv():
     
-    def __init__(self, screen_width, screen_height, nb_player, mode="game", motion="gravity", sensor="", record_play="", play_recorded=""):
+    def __init__(self, game, render, nb_player, mode="game", motion="gravity", sensor="", record_play="", play_recorded=""):
 
         self.myfont = pygame.font.SysFont('Arial', 20)
 
-        self.screen_width  = screen_width
-        self.screen_height = screen_height
+        self.render = render
         self.nb_player = nb_player
 
         # screen
-        self.game = Game(screen_width, screen_height)
+        self.game = game
         self.game.window.fill((0, 0, 0))
 
         self.mode   = mode # training or game
@@ -887,28 +885,25 @@ class Sequence():
         self.paused = False
         self.frames = 0
 
-    def main_loop(self):
+        self.nb_dead = 0
 
-        nb_dead = 0
+        self.ships = []
 
-        # exit on Quit
-        while True:
+        if self.mode == "game":
+            self.ship_1 = Ship(self.mode, self.game.screen_width, self.game.screen_height, 1, self.nb_player, SHIP1_X, SHIP1_Y, \
+                                   SHIP_1_PIC, SHIP_1_PIC_THRUST, SHIP_1_PIC_SHIELD, SHIP_1_KEYS, SHIP_1_JOY, SHIP_MAX_LIVES - self.nb_dead)
 
-            self.ships = []
+            self.ship_2 = Ship(self.mode, self.game.screen_width, self.game.screen_height, 2, self.nb_player, SHIP2_X, SHIP2_Y, \
+                               SHIP_2_PIC, SHIP_2_PIC_THRUST, SHIP_2_PIC_SHIELD, SHIP_2_KEYS, SHIP_2_JOY, SHIP_MAX_LIVES - self.nb_dead)
 
-            self.ship_1 = Ship(self.screen_width, self.screen_height, 1, self.nb_player, SHIP1_X, SHIP1_Y, \
-                               SHIP_1_PIC, SHIP_1_PIC_THRUST, SHIP_1_PIC_SHIELD, SHIP_1_KEYS, SHIP_1_JOY, SHIP_MAX_LIVES - nb_dead)
+            self.ship_3 = Ship(self.mode, self.game.screen_width, self.game.screen_height, 3, self.nb_player, SHIP3_X, SHIP3_Y, \
+                               SHIP_3_PIC, SHIP_3_PIC_THRUST, SHIP_3_PIC_SHIELD, SHIP_3_KEYS, SHIP_3_JOY, SHIP_MAX_LIVES - self.nb_dead)
 
-            self.ship_2 = Ship(self.screen_width, self.screen_height, 2, self.nb_player, SHIP2_X, SHIP2_Y, \
-                               SHIP_2_PIC, SHIP_2_PIC_THRUST, SHIP_2_PIC_SHIELD, SHIP_2_KEYS, SHIP_2_JOY, SHIP_MAX_LIVES - nb_dead)
-
-            self.ship_3 = Ship(self.screen_width, self.screen_height, 3, self.nb_player, SHIP3_X, SHIP3_Y, \
-                               SHIP_3_PIC, SHIP_3_PIC_THRUST, SHIP_3_PIC_SHIELD, SHIP_3_KEYS, SHIP_3_JOY, SHIP_MAX_LIVES - nb_dead)
-
-            self.ship_4 = Ship(self.screen_width, self.screen_height, 4, self.nb_player, SHIP4_X, SHIP4_Y, \
-                               SHIP_4_PIC, SHIP_4_PIC_THRUST, SHIP_4_PIC_SHIELD, SHIP_4_KEYS, SHIP_4_JOY, SHIP_MAX_LIVES - nb_dead)
+            self.ship_4 = Ship(self.mode, self.game.screen_width, self.game.screen_height, 4, self.nb_player, SHIP4_X, SHIP4_Y, \
+                               SHIP_4_PIC, SHIP_4_PIC_THRUST, SHIP_4_PIC_SHIELD, SHIP_4_KEYS, SHIP_4_JOY, SHIP_MAX_LIVES - self.nb_dead)
 
             self.ships.append(self.ship_1)
+            
             if self.nb_player >= 2:
                 self.ships.append(self.ship_2)
             if self.nb_player >= 3:
@@ -916,15 +911,26 @@ class Sequence():
             if self.nb_player >= 4:
                 self.ships.append(self.ship_4)
 
-            # ----- training_loop() exits when ship explods
-            if self.mode == "training":
-                self.ship_1 = Ship(self.screen_width, self.screen_height, 1, 1, 430, 730, \
-                                SHIP_1_PIC, SHIP_1_PIC_THRUST, SHIP_1_PIC_SHIELD, SHIP_1_KEYS, SHIP_1_JOY, SHIP_MAX_LIVES - nb_dead)
+        # -- training params
 
-                self.training_loop(nb_dead)
+        # nop, left, right, thrust
+        self.action_space = [0, 1, 2, 3]
+        self.done = False
+
+        if self.mode == "training":
+            self.ship_1 = Ship(self.mode, self.game.screen_width, self.game.screen_height, 1, 1, 430, 730, \
+                               SHIP_1_PIC, SHIP_1_PIC_THRUST, SHIP_1_PIC_SHIELD, SHIP_1_KEYS, SHIP_1_JOY, SHIP_MAX_LIVES)
+
+    def main_loop(self):
+
+        # exit on Quit
+        while True:
+
+            if self.mode == "training":
+                self.training_loop()
 
             elif self.mode == "game":
-                self.game_multiplayer_loop()
+                self.game_loop()
 
             for ship in self.ships:
                 ship.sound_thrust.stop()
@@ -933,7 +939,7 @@ class Sequence():
                 ship.sound_shoot.stop()
                 ship.sound_explod.play()
 
-            nb_dead += 1
+            self.nb_dead += 1
 
             # record play ?
             self.record_it()
@@ -947,7 +953,7 @@ class Sequence():
             print("%s seconds" % int(self.frames/MAX_FPS))
             sys.exit(0)
 
-    def game_multiplayer_loop(self):
+    def game_loop(self):
 
         # Game Main Loop
         while True:
@@ -1013,26 +1019,20 @@ class Sequence():
                     self.game.window.blit(self.game.map_buffer, (ship.view_left, ship.view_top), sub_area1)
 
                 # sensors
-                if self.sensor == "octo":
+                if self.sensor == "ray":
                     for ship in self.ships:
-                        Sensors.octo(self.game, ship, fixed_radius=False)
-                if self.sensor == "octo_fixed":
-                    for ship in self.ships:
-                        Sensors.octo(self.game, ship, fixed_radius=True)
-                elif self.sensor == "beam":
-                    for ship in self.ships:
-                        Sensors.beam(self.game, ship)
+                        ship.ray_sensor(self)
 
                 for ship in self.ships:
                     if ship.explod:
-                        ship.reset()
+                        ship.reset(self)
 
                 # debug on screen
                 self.screen_print_info()
 
                 cv = (225, 225, 225)
-                pygame.draw.line( self.game.window, cv, (0, int(self.screen_height/2)), (self.screen_width, int(self.screen_height/2)) )
-                pygame.draw.line( self.game.window, cv, (int(self.screen_width/2), 0), (int(self.screen_width/2), (self.screen_height)) )
+                pygame.draw.line( self.game.window, cv, (0, int(self.game.screen_height/2)), (self.game.screen_width, int(self.game.screen_height/2)) )
+                pygame.draw.line( self.game.window, cv, (int(self.game.screen_width/2), 0), (int(self.game.screen_width/2), (self.game.screen_height)) )
 
                 # display
                 pygame.display.flip()
@@ -1042,7 +1042,7 @@ class Sequence():
 
             #print(self.clock.get_fps())
 
-    def training_loop(self, nb_dead):
+    def training_loop(self):
 
         # Game Main Loop
         while not self.ship_1.explod:
@@ -1058,52 +1058,52 @@ class Sequence():
                 elif event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
                         sys.exit(0)
+                    elif event.key == pygame.K_p:
+                        self.paused = not self.paused
 
+            if not self.paused:            
+                # map copy (TODO reduce)
+                self.game.map_buffer.blit(self.game.map, (0, 0))
 
-            # map copy (TODO reduce)
-            self.game.map_buffer.blit(self.game.map, (0, 0))
+                self.ship_1.update(self)
 
-            self.ship_1.update(self)
+                # collision
+                self.ship_1.collide_map(self.game.map_buffer, self.game.map_buffer_mask)
 
-            # collision
-            self.ship_1.collide_map(self.game.map_buffer, self.game.map_buffer_mask)
+                # blit ship in the map
+                self.ship_1.draw(self.game.map_buffer)
 
-            # blit ship in the map
-            self.ship_1.draw(self.game.map_buffer)
+                # clipping to avoid black when the ship is close to the edges
+                rx = self.ship_1.xpos - self.ship_1.view_width/2
+                ry = self.ship_1.ypos - self.ship_1.view_height/2
+                if rx < 0:
+                    rx = 0
+                elif rx > (MAP_WIDTH - self.ship_1.view_width):
+                    rx = (MAP_WIDTH - self.ship_1.view_width)
+                if ry < 0:
+                    ry = 0
+                elif ry > (MAP_HEIGHT - self.ship_1.view_height):
+                    ry = (MAP_HEIGHT - self.ship_1.view_height)
 
-            # clipping to avoid black when the ship is close to the edges
-            rx = self.ship_1.xpos - self.ship_1.view_width/2
-            ry = self.ship_1.ypos - self.ship_1.view_height/2
-            if rx < 0:
-                rx = 0
-            elif rx > (MAP_WIDTH - self.ship_1.view_width):
-                rx = (MAP_WIDTH - self.ship_1.view_width)
-            if ry < 0:
-                ry = 0
-            elif ry > (MAP_HEIGHT - self.ship_1.view_height):
-                ry = (MAP_HEIGHT - self.ship_1.view_height)
+                # blit the map area around the ship on the screen
+                sub_area1 = Rect(rx, ry, self.ship_1.view_width, self.ship_1.view_height)
+                self.game.window.blit(self.game.map_buffer, (self.ship_1.view_left, self.ship_1.view_top), sub_area1)
 
-            # blit the map area around the ship on the screen
-            sub_area1 = Rect(rx, ry, self.ship_1.view_width, self.ship_1.view_height)
-            self.game.window.blit(self.game.map_buffer, (self.ship_1.view_left, self.ship_1.view_top), sub_area1)
+                # sensors
+                if self.sensor == "ray":
+                    self.ship_1.ray_sensor(self)
 
-            # sensors
-            if self.sensor == "octo":
-                Sensors.octo(self.game, self.ship_1, fixed_radius=False)
-            if self.sensor == "octo_fixed":
-                Sensors.octo(self.game, self.ship_1, fixed_radius=True)
-            elif self.sensor == "beam":
-                Sensors.beam(self.game, self.ship_1)
+                # debug on screen
+                self.screen_print_info()
 
-            # debug on screen
-            self.screen_print_info()
+                # display
+                pygame.display.flip()
 
-            # display
-            pygame.display.flip()
+                self.frames += 1
+                #print(self.clock.get_fps())
+
             self.clock.tick(MAX_FPS) # https://python-forum.io/thread-16692.html
 
-            self.frames += 1
-            #print(self.clock.get_fps())
 
     def screen_print_info(self):
         # debug text
@@ -1126,9 +1126,202 @@ class Sequence():
             #ship_lives = self.myfont.render('Lives: %s' % (self.ship_1.lives,), False, (255, 255, 255))
             #self.game.window.blit(ship_lives, (DEBUG_TEXT_XPOS + 5, 105))
 
+    # training only
+    def reset(self):
+        self.frames = 0
+        self.done = False
+        self.paused = False
+        self.ship_1.reset(self)
+
+        #new_state = [angle_norm, vx_norm, vy_norm, ax_norm, ay_norm]
+        #new_state.extend(wall_distances)
+
+        new_state = [0.0, 0.0, 0.0, 0.0, 0.0]
+        wall_distances = [0, 0, 0, 0, 0, 0, 0, 0]
+        new_state.extend(wall_distances)
+
+        return np.array(new_state, dtype=np.float32)
+
+    # training only
+    def step(self, action, max_frame=2000):
+
+        if not self.paused:
+            
+            self.game.window.fill((0,0,0))
+
+            done = False
+
+            if action not in self.action_space:
+                action = randint(0,3)
+
+            old_xpos = self.ship_1.xposprecise
+            old_ypos = self.ship_1.yposprecise
+
+            self.ship_1.step(self, action)
+
+            # already normalized (8 values for angle=45 degres, 12 for 30 degres etc)
+            wall_distances = [0, 0, 0, 0, 0, 0, 0, 0]
+            if self.sensor == "ray":
+                wall_distances = self.ship_1.ray_sensor(self)
+
+            # normalized ship physic params
+            angle_norm = self.ship_1.angle / 360.
+
+            if self.ship_1.vy < 0:
+                vy_norm = self.ship_1.vy / 6.5
+            else:
+                vy_norm = self.ship_1.vy / 8.5
+
+            vx_norm = self.ship_1.vx / 5.5
+
+            if self.ship_1.ay < 0:
+                ay_norm = self.ship_1.ay / 0.12
+            else:
+                ay_norm = self.ship_1.ay / 0.20
+
+            ax_norm = self.ship_1.ax / 0.16
+
+            new_state = [angle_norm, vx_norm, vy_norm, ax_norm, ay_norm]
+            new_state.extend(wall_distances)
+
+            collision = False
+            for dist in wall_distances:
+                if dist == 0:
+                    collision = True
+                    break
+
+            done = self.ship_1.explod
+            done |= self.frames > max_frame
+            done |= collision
+
+            # reward
+            reward = 1
+
+            d = math.sqrt((old_xpos - self.ship_1.xposprecise)**2 + (old_ypos - self.ship_1.yposprecise)**2)
+            #print(d)
+
+            d_end = math.sqrt((self.ship_1.init_xpos - self.ship_1.xpos)**2 + (self.ship_1.init_ypos - self.ship_1.ypos)**2)
+            reward += d_end / 100
+
+            if d < 2.0:
+                reward = 0
+
+            if collision:
+                reward = -500
+
+            self.frames += 1
+
+            return np.array(new_state, dtype=np.float32), reward, done, {}
+        else:
+            return None, None, None, {}
+
+    # training only
+    def display(self, collision_check=True):
+
+        # pygame events
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.record_it()
+                sys.exit(0)
+
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    self.record_it()
+                    sys.exit(0)
+                elif event.key == pygame.K_p:
+                    self.paused = not self.paused
+
+        if not self.paused:
+
+            # clear screen: done in self.step()
+
+            # map copy (TODO reduce)
+            self.game.map_buffer.blit(self.game.map, (0, 0))
+
+            # collision (when false we use the sensor to detect a collision)
+            if collision_check:
+                self.ship_1.collide_map(self.game.map_buffer, self.game.map_buffer_mask)
+
+            # blit ship in the map
+            self.ship_1.draw(self.game.map_buffer)
+
+            # clipping to avoid black when the ship is close to the edges
+            rx = self.ship_1.xpos - self.ship_1.view_width/2
+            ry = self.ship_1.ypos - self.ship_1.view_height/2
+            if rx < 0:
+                rx = 0
+            elif rx > (MAP_WIDTH - self.ship_1.view_width):
+                rx = (MAP_WIDTH - self.ship_1.view_width)
+            if ry < 0:
+                ry = 0
+            elif ry > (MAP_HEIGHT - self.ship_1.view_height):
+                ry = (MAP_HEIGHT - self.ship_1.view_height)
+
+            # blit the map area around the ship on the screen
+            sub_area1 = Rect(rx, ry, self.ship_1.view_width, self.ship_1.view_height)
+            self.game.window.blit(self.game.map_buffer, (self.ship_1.view_left, self.ship_1.view_top), sub_area1)
+
+            # debug on screen
+            self.screen_print_info()
+
+            # display
+            pygame.display.flip()
+
+            if self.render:
+                self.clock.tick(MAX_FPS)
+
+# -------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------------------------
 
+class GameWindow():
+
+    def __init__(self, screen_width, screen_height, mode):
+
+        pygame.display.set_caption('Mayhem')
+
+        if mode == "training":
+            self.screen_width = 400
+            self.screen_height = 400
+
+            self.window = pygame.display.set_mode((self.screen_width, self.screen_height))
+        else:
+            self.screen_width = screen_width
+            self.screen_height = screen_height
+
+            flags = pygame.DOUBLEBUF | pygame.NOFRAME # | pygame.FULLSCREEN 
+            self.window = pygame.display.set_mode((screen_width, screen_height), flags)
+
+        #pygame.display.iconify()
+
+        # Background
+        self.map = pygame.image.load(MAP_1).convert() # .convert_alpha()
+        #self.map.set_colorkey( (0, 0, 0) ) # used for the mask, black = background
+        #self.map_rect = self.map.get_rect()
+        #self.map_mask = pygame.mask.from_surface(self.map)
+        #self.mask_map_fx = pygame.mask.from_surface(pygame.transform.flip(self.map, True, False))
+        #self.mask_map_fy = pygame.mask.from_surface(pygame.transform.flip(self.map, False, True))
+        #self.mask_map_fx_fy = pygame.mask.from_surface(pygame.transform.flip(self.map, True, True))
+        #self.flipped_masks = [[self.map_mask, self.mask_map_fy], [self.mask_map_fx, self.mask_map_fx_fy]]
+
+        self.map_buffer = self.map.copy() # pygame.Surface((self.map.get_width(), self.map.get_height()))
+
+        self.map_buffer.set_colorkey( (0, 0, 0) )
+        self.map_buffer_mask = pygame.mask.from_surface(self.map_buffer)
+        self.mask_map_buffer_fx = pygame.mask.from_surface(pygame.transform.flip(self.map_buffer, True, False))
+        self.mask_map_buffer_fy = pygame.mask.from_surface(pygame.transform.flip(self.map_buffer, False, True))
+        self.mask_map_buffer_fx_fy = pygame.mask.from_surface(pygame.transform.flip(self.map_buffer, True, True))
+        self.flipped_masks_map_buffer = [[self.map_buffer_mask, self.mask_map_buffer_fy], [self.mask_map_buffer_fx, self.mask_map_buffer_fx_fy]]
+
+# -------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
+
+global game_window
+global NEAT_MULTIPROCESS
+
 def run():
+    pygame.mixer.pre_init(frequency=22050)
     pygame.init()
     #pygame.display.init()
 
@@ -1150,14 +1343,14 @@ def run():
     # options
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('-width', '--width', help='', type=int, action="store", default=1920)
-    parser.add_argument('-height', '--height', help='', type=int, action="store", default=1080)
+    parser.add_argument('-width', '--width', help='', type=int, action="store", default=1500)
+    parser.add_argument('-height', '--height', help='', type=int, action="store", default=900)
     parser.add_argument('-np', '--nb_player', help='', type=int, action="store", default=2)
 
     parser.add_argument('-m', '--motion', help='How the ship moves', action="store", default='gravity', choices=("basic", "thrust", "gravity"))
     parser.add_argument('-r', '--record_play', help='', action="store", default="")
     parser.add_argument('-pr', '--play_recorded', help='', action="store", default="")
-    parser.add_argument('-s', '--sensor', help='', action="store", default="", choices=("octo", "octo_fixed", "beam", ""))
+    parser.add_argument('-s', '--sensor', help='', action="store", default="", choices=("ray", ""))
     parser.add_argument('-rm', '--run_mode', help='', action="store", default="game", choices=("game", "training", ))
 
     result = parser.parse_args()
@@ -1165,9 +1358,158 @@ def run():
 
     print("Args", args)
 
-    # env
-    seq = Sequence(args["width"], args["height"], args["nb_player"], mode=args["run_mode"], motion=args["motion"], sensor=args["sensor"], record_play=args["record_play"], play_recorded=args["play_recorded"])
-    seq.main_loop()
+    # window
+    global game_window
+    game_window = GameWindow(args["width"], args["height"], args["run_mode"])
+
+    # game mode
+    if args["run_mode"] == "game":
+        env = MayhemEnv(game_window, True, args["nb_player"], mode=args["run_mode"], motion=args["motion"], \
+                        sensor=args["sensor"], record_play=args["record_play"], play_recorded=args["play_recorded"])
+        env.main_loop()
+
+    # training mode
+    else:
+        USE_AI = 1
+        
+        USE_NEAT = 1
+        global NEAT_MULTIPROCESS
+        NEAT_MULTIPROCESS = 0
+        LOAD_NEAT_WINNER = 0
+        NEAT_MAX_GENERATION = 200
+
+
+        env = MayhemEnv(game_window, True, args["nb_player"], mode=args["run_mode"], motion=args["motion"], \
+                        sensor=args["sensor"], record_play=args["record_play"], play_recorded=args["play_recorded"])
+
+        # manual
+        if not USE_AI:
+            env.main_loop()
+        
+        else:
+            # random test
+            if not USE_NEAT:
+                episode = 0
+
+                while True:
+                    done = False
+
+                    while not done:
+                        action = -1 # -1 means random
+                        new_state, reward, done, info = env.step(action)
+                        env.display()
+
+                    # here the ship exploded
+                    episode += 1
+                    print(f"Episode={episode}, frames={env.frames}")
+                    env.reset()
+
+            # neat
+            else:
+                if not NEAT_FOUND:
+                    print("Neat has not been found on the system")
+                    sys.exit(0)
+
+                # neat traning
+                if not LOAD_NEAT_WINNER:
+                    # Load the config file, which is assumed to live in
+                    # the same directory as this script.
+                    local_dir = os.path.dirname(__file__)
+                    config_path = os.path.join(local_dir, 'config')
+
+                    config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
+                                         neat.DefaultSpeciesSet, neat.DefaultStagnation,
+                                         config_path)
+
+                    pop = neat.Population(config)
+                    stats = neat.StatisticsReporter()
+
+                    pop.add_reporter(stats)
+                    pop.add_reporter(neat.StdOutReporter(True))
+
+                    if NEAT_MULTIPROCESS:
+                        pe = neat.ParallelEvaluator(multiprocessing.cpu_count(), eval_genome)
+                    else:
+                        pe = neat.ParallelEvaluator(1, eval_genome)
+
+                    winner = pop.run(pe.evaluate, NEAT_MAX_GENERATION)
+
+                    # Save the winner.
+                    with open('winner', 'wb') as f:
+                        pickle.dump(winner, f)
+
+                    print(winner)
+
+                # neat load best
+                else:
+                    # load the winner
+                    with open('winner', 'rb') as f:
+                        c = pickle.load(f)
+
+                    print('Loaded genome:')
+                    print(c)
+
+                    # Load the config file, which is assumed to live in
+                    # the same directory as this script.
+                    local_dir = os.path.dirname(__file__)
+                    config_path = os.path.join(local_dir, 'config')
+                    config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
+                                         neat.DefaultSpeciesSet, neat.DefaultStagnation,
+                                         config_path)
+
+                    net = neat.nn.FeedForwardNetwork.create(c, config)
+
+                    neat_env = MayhemEnv(game_window, True, 1, mode="training", motion="gravity", sensor="ray", record_play="", play_recorded="")
+                    observation = neat_env.reset()
+
+                    done = False
+                    while not done:
+                        #action = net.activate(observation)
+                        action = np.argmax(net.activate(observation))
+
+                        observation, reward, done, info = neat_env.step(action, max_frame=100000)
+                        neat_env.display(collision_check=False)
+
+# -----------------------------------
+
+# Use the NN network phenotype and the discrete actuator force function.
+def eval_genome(genome, config):
+    runs_per_net = 1
+    net = neat.nn.FeedForwardNetwork.create(genome, config)
+
+    fitnesses = []
+
+    for runs in range(runs_per_net):
+
+        neat_env = MayhemEnv(game_window, False, 1, mode="training", motion="gravity", sensor="ray", record_play="", play_recorded="")
+        observation = neat_env.reset()
+
+        fitness = 0.0
+        done = False
+        while not done:
+
+            action = np.argmax(net.activate(observation))
+            #action = net.activate(observation) # [-1.0, -0.17934807670239852, 1.0, -0.3551236740213184]
+            #print(action)
+            observation, reward, done, info = neat_env.step(action, max_frame=3000)
+            
+            if not NEAT_MULTIPROCESS:
+                neat_env.display(collision_check=False)
+            #neat_env.display(collision_check=False)
+
+            #print(observation)
+
+            fitness += reward
+
+            #print(fitness)
+
+        fitnesses.append(fitness)
+
+
+    mean_fit = np.mean(fitnesses)
+    print(mean_fit)
+
+    return mean_fit
 
 if __name__ == '__main__':
     run()
