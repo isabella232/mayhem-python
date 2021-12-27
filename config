@@ -3,26 +3,35 @@
 # The `NEAT` section specifies parameters particular to the NEAT algorithm
 # or the experiment itself.  This is the only required section.
 [NEAT]
-fitness_criterion     = mean
-fitness_threshold     = 2000.0
+fitness_criterion     = max
+fitness_threshold     = 10000.0
 
-pop_size              = 100
+pop_size              = 250
 reset_on_extinction   = 0
 
 [DefaultGenome]
+
+# angle + 8 dist
+#num_inputs              = 9
+
+# angle vx vy ax ay + 8 dist
 num_inputs              = 13
-num_hidden              = 2
-num_outputs             = 4
+
+# thrust angle vx vy ax ay + 8 dist
+#num_inputs              = 14
+
+num_hidden              = 1
+num_outputs             = 2
 initial_connection      = partial_direct 0.5
-feed_forward            = True
+feed_forward            = False
 compatibility_disjoint_coefficient    = 1.0
 compatibility_weight_coefficient      = 0.6
 conn_add_prob           = 0.2
 conn_delete_prob        = 0.2
 node_add_prob           = 0.2
 node_delete_prob        = 0.2
-activation_default      = relu
-activation_options      = relu
+activation_default      = clamped
+activation_options      = clamped
 activation_mutate_rate  = 0.00
 aggregation_default     = sum
 aggregation_options     = sum

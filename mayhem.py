@@ -34,6 +34,7 @@ python3 mayhem.py -pr=played1.dat --motion=gravity
 import os, sys, argparse, random, math, time, multiprocessing
 from random import randint
 import numpy as np
+import datetime as dt
 
 import pygame
 from pygame.locals import *
@@ -52,6 +53,8 @@ except ImportError:
 
 # -------------------------------------------------------------------------------------------------
 # General
+
+global game_window
 
 DEBUG_SCREEN = 1 # print debug info on the screen
 DEBUG_TEXT_XPOS = 0
@@ -277,6 +280,42 @@ class Ship():
 
         self.ray_surface = pygame.Surface((RAY_BOX_SIZE, RAY_BOX_SIZE))
 
+    def reset(self, env):
+        if env.mode == "training" and 0:
+            self.xpos, self.ypos = random.choice(START_POSITIONS)
+        else:
+            self.xpos = self.init_xpos
+            self.ypos = self.init_ypos
+
+        self.xposprecise = self.xpos
+        self.yposprecise = self.ypos
+
+        self.vx = 0.0
+        self.vy = 0.0
+        self.ax = 0.0
+        self.ay = 0.0
+
+        self.impactx = 0.0
+        self.impacty = 0.0
+
+        self.angle  = 0.0
+        self.thrust = 0.0
+        self.shield = False
+        self.shoot  = False
+        self.shoot_delay = False
+        self.landed = False
+        self.bounce = False
+        self.explod = False
+
+        self.lives -= 1
+
+        if env.render:
+            self.sound_thrust.stop()
+            self.sound_shoot.stop()
+            self.sound_shield.stop()
+            self.sound_bounce.stop()
+            self.sound_explod.play()
+
     def step(self, env, action):
 
         if not env.play_recorded:
@@ -288,12 +327,20 @@ class Ship():
             shoot_pressed  = False
             shield_pressed = False
 
-            if action == 1:
+            if action[0] < -0.33:
                 left_pressed = True
-            if action == 2:
+            elif action[0] > 0.33:
                 right_pressed = True
-            if action == 3:
+
+            if action[1] <= 0:
                 thrust_pressed = True
+
+            #if action == 1:
+            #    left_pressed = True
+            #if action == 2:
+            #    right_pressed = True
+            #if action == 3:
+            #    thrust_pressed = True
 
             # record play ?
             if env.record_play:
@@ -376,6 +423,10 @@ class Ship():
                 thrust_pressed = True if data_i[2] else False
                 shield_pressed = True if data_i[3] else False
                 shoot_pressed  = True if data_i[4] else False
+
+                up_pressed   = False
+                down_pressed = False
+
             except:
                 print("End of playback")
                 print("Frames=", env.frames)
@@ -383,15 +434,8 @@ class Ship():
                 sys.exit(0)
 
 
-            left_pressed   = keys[self.keys_mapping["left"]]
-            right_pressed  = keys[self.keys_mapping["right"]]
-            up_pressed     = keys[self.keys_mapping["up"]]
-            down_pressed   = keys[self.keys_mapping["down"]]
-            thrust_pressed = keys[self.keys_mapping["thrust"]]
-            shoot_pressed  = keys[self.keys_mapping["shoot"]]
-            shield_pressed = keys[self.keys_mapping["shield"]]
-
         self.do_move(env, left_pressed, right_pressed, up_pressed, down_pressed, thrust_pressed, shoot_pressed, shield_pressed)
+
 
     def do_move(self, env, left_pressed, right_pressed, up_pressed, down_pressed, thrust_pressed, shoot_pressed, shield_pressed):
 
@@ -659,42 +703,6 @@ class Ship():
         #game_window.blit(self.image_rotated, (self.view_width/2 + self.view_left + self.rot_xoffset, self.view_height/2 + self.view_top + self.rot_yoffset))
         map_buffer.blit(self.image_rotated, (self.xpos + self.rot_xoffset, self.ypos + self.rot_yoffset))
 
-    def reset(self, env):
-        if env.mode == "training" and 0:
-            self.xpos, self.ypos = random.choice(START_POSITIONS)
-        else:
-            self.xpos = self.init_xpos
-            self.ypos = self.init_ypos
-
-        self.xposprecise = self.xpos
-        self.yposprecise = self.ypos
-
-        self.vx = 0.0
-        self.vy = 0.0
-        self.ax = 0.0
-        self.ay = 0.0
-
-        self.impactx = 0.0
-        self.impacty = 0.0
-
-        self.angle  = 0.0
-        self.thrust = 0.0
-        self.shield = False
-        self.shoot  = False
-        self.shoot_delay = False
-        self.landed = False
-        self.bounce = False
-        self.explod = False
-
-        self.lives -= 1
-
-        if env.render:
-            self.sound_thrust.stop()
-            self.sound_shoot.stop()
-            self.sound_shield.stop()
-            self.sound_bounce.stop()
-            self.sound_explod.play()
-
     def collide_map(self, map_buffer, map_buffer_mask):
 
         # ship size mask
@@ -840,7 +848,7 @@ class Ship():
             if dist_wall < 0:
                 dist_wall = 0
 
-            wall_distances.append(dist_wall / RAY_MAX_LEN) # normalize
+            wall_distances.append(dist_wall)
 
             #print("Sensor for angle=%s, dist wall=%.2f" % (str(angle), dist_wall))
 
@@ -912,9 +920,6 @@ class MayhemEnv():
                 self.ships.append(self.ship_4)
 
         # -- training params
-
-        # nop, left, right, thrust
-        self.action_space = [0, 1, 2, 3]
         self.done = False
 
         if self.mode == "training":
@@ -926,9 +931,12 @@ class MayhemEnv():
         # exit on Quit
         while True:
 
+            # real training loop is done in reset() / step() / display()
+            # practice_loop is just a free flight
             if self.mode == "training":
-                self.training_loop()
+                self.practice_loop()
 
+            # game
             elif self.mode == "game":
                 self.game_loop()
 
@@ -1042,7 +1050,7 @@ class MayhemEnv():
 
             #print(self.clock.get_fps())
 
-    def training_loop(self):
+    def practice_loop(self):
 
         # Game Main Loop
         while not self.ship_1.explod:
@@ -1129,6 +1137,7 @@ class MayhemEnv():
     # training only
     def reset(self):
         self.frames = 0
+        self.total_dist = 0
         self.done = False
         self.paused = False
         self.ship_1.reset(self)
@@ -1136,7 +1145,9 @@ class MayhemEnv():
         #new_state = [angle_norm, vx_norm, vy_norm, ax_norm, ay_norm]
         #new_state.extend(wall_distances)
 
+        #new_state = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         new_state = [0.0, 0.0, 0.0, 0.0, 0.0]
+        #new_state = [0.0]
         wall_distances = [0, 0, 0, 0, 0, 0, 0, 0]
         new_state.extend(wall_distances)
 
@@ -1151,42 +1162,87 @@ class MayhemEnv():
 
             done = False
 
-            if action not in self.action_space:
-                action = randint(0,3)
-
             old_xpos = self.ship_1.xposprecise
             old_ypos = self.ship_1.yposprecise
 
             self.ship_1.step(self, action)
 
-            # already normalized (8 values for angle=45 degres, 12 for 30 degres etc)
+            # https://www.baeldung.com/cs/normalizing-inputs-artificial-neural-network
+            # https://machinelearningmastery.com/how-to-improve-neural-network-stability-and-modeling-performance-with-data-scaling/
+            # min-max: (((x - min) / (max - min)) * (end - start)) + start (typically start=0, end=1)
+
+            NORMALIZE = 1
+
+            # not normalized (8 values for angle=45 degres, 12 for 30 degres etc)
             wall_distances = [0, 0, 0, 0, 0, 0, 0, 0]
+
             if self.sensor == "ray":
                 wall_distances = self.ship_1.ray_sensor(self)
 
+                if NORMALIZE:
+                    for i, dist in enumerate(wall_distances):
+                        #wall_distances[i] = dist / RAY_MAX_LEN # [0, 1]
+                        wall_distances[i] = ((dist / RAY_MAX_LEN)*2) - 1 # [-1, 1]
+
+            # normalized wall_distances in [0, 1] or [-1, 1]
+            #print(wall_distances)
+
             # normalized ship physic params
-            angle_norm = self.ship_1.angle / 360.
+            if NORMALIZE:
+                #angle_norm = self.ship_1.angle / (360. - SHIP_ANGLESTEP)
+                angle_norm = ((self.ship_1.angle / (360. - SHIP_ANGLESTEP)) * 2) - 1
 
-            if self.ship_1.vy < 0:
-                vy_norm = self.ship_1.vy / 6.5
+                # vx range = [-5.5, +5.5] (more or less with default phisical values, for "standard playing")
+                # vy range = [-6.5, +8.5] (more or less with default phisical values, for "standard playing")
+                # ax range = [-0.16, +0.16] (more or less with default phisical values, for "standard playing")
+                # vx range = [-0.12, +0.20] (more or less with default phisical values, for "standard playing")
+
+                vx_min = -5.5  ; vx_max = 5.5
+                vy_min = -6.5  ; vy_max = 8.5
+                ax_min = -0.16 ; ax_max = 0.16
+                ay_min = -0.12 ; ay_max = 0.20
+
+                vx_norm = (((self.ship_1.vx - vx_min) / (vx_max - vx_min)) * 2) - 1
+                vy_norm = (((self.ship_1.vy - vy_min) / (vy_max - vy_min)) * 2) - 1
+                ax_norm = (((self.ship_1.ax - ax_min) / (ax_max - ax_min)) * 2) - 1
+                ay_norm = (((self.ship_1.ay - ay_min) / (ay_max - ay_min)) * 2) - 1
+
+            # raw input
             else:
-                vy_norm = self.ship_1.vy / 8.5
+                angle_norm = self.ship_1.angle
+                vy_norm    = self.ship_1.vy
+                vx_norm    = self.ship_1.vx
+                ay_norm    = self.ship_1.ay
+                ax_norm    = self.ship_1.ax
 
-            vx_norm = self.ship_1.vx / 5.5
-
-            if self.ship_1.ay < 0:
-                ay_norm = self.ship_1.ay / 0.12
+            if self.ship_1.thrust:
+                thrust_on = 1
             else:
-                ay_norm = self.ship_1.ay / 0.20
+                thrust_on = -1
 
-            ax_norm = self.ship_1.ax / 0.16
-
+            #print(angle_norm)
+            #new_state = [thrust_on, angle_norm, vx_norm, vy_norm, ax_norm, ay_norm]
             new_state = [angle_norm, vx_norm, vy_norm, ax_norm, ay_norm]
+            #new_state = [angle_norm]
             new_state.extend(wall_distances)
+
+            #print(new_state)
+
+            reward = 1
+
+            # do not move ?
+            d = math.sqrt((old_xpos - self.ship_1.xposprecise)**2 + (old_ypos - self.ship_1.yposprecise)**2)
+
+            #print(d)
+            if d < 1.0:
+                reward = 0
+            else:
+                self.total_dist += d
 
             collision = False
             for dist in wall_distances:
-                if dist == 0:
+                #if dist == 0:  # if normalized in [0, 1]
+                if dist == -1: # if normalized in [-1, 1]
                     collision = True
                     break
 
@@ -1194,22 +1250,17 @@ class MayhemEnv():
             done |= self.frames > max_frame
             done |= collision
 
-            # reward
-            reward = 1
-
-            d = math.sqrt((old_xpos - self.ship_1.xposprecise)**2 + (old_ypos - self.ship_1.yposprecise)**2)
-            #print(d)
-
             d_end = math.sqrt((self.ship_1.init_xpos - self.ship_1.xpos)**2 + (self.ship_1.init_ypos - self.ship_1.ypos)**2)
-            reward += d_end / 100
 
-            if d < 2.0:
-                reward = 0
+            if collision or self.ship_1.explod:
+                reward = -1000
 
-            if collision:
-                reward = -500
+            if done:
+                reward += self.total_dist
+                reward += d_end*2
 
             self.frames += 1
+            #print(self.total_dist)
 
             return np.array(new_state, dtype=np.float32), reward, done, {}
         else:
@@ -1289,10 +1340,8 @@ class GameWindow():
             self.screen_width = screen_width
             self.screen_height = screen_height
 
-            flags = pygame.DOUBLEBUF | pygame.NOFRAME # | pygame.FULLSCREEN 
+            flags = pygame.DOUBLEBUF #| pygame.NOFRAME # | pygame.FULLSCREEN 
             self.window = pygame.display.set_mode((screen_width, screen_height), flags)
-
-        #pygame.display.iconify()
 
         # Background
         self.map = pygame.image.load(MAP_1).convert() # .convert_alpha()
@@ -1317,8 +1366,164 @@ class GameWindow():
 # -------------------------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------------------------
 
-global game_window
-global NEAT_MULTIPROCESS
+class CustomNeatReporter(neat.reporting.BaseReporter):
+
+    def __init__(self):
+        self.generation = None
+
+    def start_generation(self, generation):
+        self.generation = generation
+
+    def post_evaluate(self, config, population, species, best_genome):
+        if best_genome.fitness > 1000:
+            now = dt.datetime.now()
+            net_name = f"gen{self.generation}_{best_genome.fitness}_{now.hour}h{now.minute}m{now.second}s"
+
+            with open(net_name, 'wb') as f:
+                pickle.dump(best_genome, f)
+
+            print(f"=> Dumped genome with fitness={best_genome.fitness} : {net_name}")
+
+# -------------------------------------------------------------------------------------------------
+
+class NeatTraining():
+
+    def __init__(self, runs_per_net, max_gen, multi):
+
+        self.runs_per_net = runs_per_net
+        self.max_gen = max_gen
+        self.multi = multi
+
+    def render_loaded_genome(self, g):
+        config = neat.Config( neat.DefaultGenome, neat.DefaultReproduction,
+                              neat.DefaultSpeciesSet, neat.DefaultStagnation,
+                              os.path.join(os.getcwd(), 'config') )
+
+        net = neat.nn.RecurrentNetwork.create(g, config)
+        #net = neat.nn.FeedForwardNetwork.create(g, config)
+
+        neat_env = MayhemEnv(game_window, False, 1, mode="training", motion="gravity", sensor="ray", record_play="", play_recorded="")
+        observation = neat_env.reset()
+
+        done = False
+        while not done:
+            action = net.activate(observation)
+            #action = np.argmax(net.activate(observation))
+
+            observation, reward, done, info = neat_env.step(action, max_frame=20000)
+            neat_env.display(collision_check=False)
+
+    def load_net(self, net_name=None):
+
+        if not net_name:
+            file_list = [ x for x in os.listdir(os.getcwd()) if os.path.isfile(os.path.join(os.getcwd(), x)) and x.startswith("gen") ]
+
+            for fname in file_list:
+                with open(fname, 'rb') as f:
+                    g = pickle.load(f)
+
+                print('Loaded genome:')
+                print(g)
+
+                self.render_loaded_genome(g)
+                time.sleep(1)
+
+        with open(net_name, 'rb') as f:
+            g = pickle.load(f)
+
+        print('Loaded genome:')
+        print(g)
+
+        self.render_loaded_genome(g)
+
+    def train_it(self):
+        local_dir = os.path.dirname(__file__)
+        config_path = os.path.join(local_dir, 'config')
+
+        config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
+                             neat.DefaultSpeciesSet, neat.DefaultStagnation,
+                             config_path)
+
+        pop = neat.Population(config)
+        stats = neat.StatisticsReporter()
+
+        pop.add_reporter(stats)
+        pop.add_reporter(neat.StdOutReporter(True))
+        pop.add_reporter(CustomNeatReporter())
+
+        if self.multi:
+            pe = neat.ParallelEvaluator(multiprocessing.cpu_count(), self.eval_genome)
+            winner = pop.run(pe.evaluate, self.max_gen)
+        else:
+            if 0:
+                pe = neat.ParallelEvaluator(1, self.eval_genome)
+                winner = pop.run(pe.evaluate, self.max_gen)
+            else:
+                winner = pop.run(self.eval_genomes, self.max_gen)
+
+        # Save the winner.
+        with open('winner', 'wb') as f:
+            pickle.dump(winner, f)
+
+        print(winner)
+
+    def eval_genome(self, genome, config):
+        #for i, g in enumerate(genome):
+        #    print(i, g)
+
+        net = neat.nn.RecurrentNetwork.create(genome, config)
+        #net = neat.nn.FeedForwardNetwork.create(genome, config)
+
+        fitnesses = []
+
+        for runs in range(self.runs_per_net):
+
+            neat_env = MayhemEnv(game_window, False, 1, mode="training", motion="gravity", sensor="ray", record_play="", play_recorded="")
+            observation = neat_env.reset()
+
+            fitness = 0.0
+            done = False
+            while not done:
+
+                #action = np.argmax(net.activate(observation))
+                action = net.activate(observation) # [-1.0, -0.17934807670239852, 1.0, -0.3551236740213184]
+                #print(action)
+                observation, reward, done, info = neat_env.step(action, max_frame=4000)
+                
+                if not self.multi:
+                    neat_env.display(collision_check=False)
+
+                #print(observation)
+
+                fitness += reward
+                #print(fitness)
+
+                # dump network
+                for event in pygame.event.get():
+                    if event.type == pygame.KEYDOWN:
+                        if event.key == pygame.K_d:
+                            now = dt.datetime.now()
+                            net_name = f"gen_{genome.fitness}_{now.hour}h{now.minute}m{now.second}s"
+                            with open(net_name, 'wb') as f:
+                                pickle.dump(genome, f)
+                            print("Dumped ", net_name)
+
+
+            fitnesses.append(fitness)
+
+
+        mean_fit = np.mean(fitnesses)
+        print(mean_fit)
+
+        return mean_fit
+
+    def eval_genomes(self, genomes, config):
+        for genome_id, genome in genomes:
+            genome.fitness = self.eval_genome(genome, config)
+
+# -------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 
 def run():
     pygame.mixer.pre_init(frequency=22050)
@@ -1343,9 +1548,9 @@ def run():
     # options
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('-width', '--width', help='', type=int, action="store", default=1500)
-    parser.add_argument('-height', '--height', help='', type=int, action="store", default=900)
-    parser.add_argument('-np', '--nb_player', help='', type=int, action="store", default=2)
+    parser.add_argument('-width', '--width', help='', type=int, action="store", default=1200)
+    parser.add_argument('-height', '--height', help='', type=int, action="store", default=800)
+    parser.add_argument('-np', '--nb_player', help='', type=int, action="store", default=4)
 
     parser.add_argument('-m', '--motion', help='How the ship moves', action="store", default='gravity', choices=("basic", "thrust", "gravity"))
     parser.add_argument('-r', '--record_play', help='', action="store", default="")
@@ -1371,13 +1576,15 @@ def run():
     # training mode
     else:
         USE_AI = 1
-        
-        USE_NEAT = 1
-        global NEAT_MULTIPROCESS
-        NEAT_MULTIPROCESS = 0
-        LOAD_NEAT_WINNER = 0
-        NEAT_MAX_GENERATION = 200
 
+        USE_NEAT = 1
+        NEAT_LOAD_WINNER  = 0   #
+        NEAT_MAX_GEN      = 100 # stop if this number is reach (if not before per other criteria)
+        NEAT_RUNS_PER_NET = 1   # useful if init position is random
+        NEAT_MULTI        = 0   # multiprocess, if true no display
+
+        if NEAT_MULTI:
+            pygame.display.iconify()
 
         env = MayhemEnv(game_window, True, args["nb_player"], mode=args["run_mode"], motion=args["motion"], \
                         sensor=args["sensor"], record_play=args["record_play"], play_recorded=args["play_recorded"])
@@ -1385,131 +1592,28 @@ def run():
         # manual
         if not USE_AI:
             env.main_loop()
-        
+
         else:
-            # random test
-            if not USE_NEAT:
-                episode = 0
+            # NEAT
+            if USE_NEAT:
 
-                while True:
-                    done = False
-
-                    while not done:
-                        action = -1 # -1 means random
-                        new_state, reward, done, info = env.step(action)
-                        env.display()
-
-                    # here the ship exploded
-                    episode += 1
-                    print(f"Episode={episode}, frames={env.frames}")
-                    env.reset()
-
-            # neat
-            else:
                 if not NEAT_FOUND:
                     print("Neat has not been found on the system")
                     sys.exit(0)
-
-                # neat traning
-                if not LOAD_NEAT_WINNER:
-                    # Load the config file, which is assumed to live in
-                    # the same directory as this script.
-                    local_dir = os.path.dirname(__file__)
-                    config_path = os.path.join(local_dir, 'config')
-
-                    config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
-                                         neat.DefaultSpeciesSet, neat.DefaultStagnation,
-                                         config_path)
-
-                    pop = neat.Population(config)
-                    stats = neat.StatisticsReporter()
-
-                    pop.add_reporter(stats)
-                    pop.add_reporter(neat.StdOutReporter(True))
-
-                    if NEAT_MULTIPROCESS:
-                        pe = neat.ParallelEvaluator(multiprocessing.cpu_count(), eval_genome)
-                    else:
-                        pe = neat.ParallelEvaluator(1, eval_genome)
-
-                    winner = pop.run(pe.evaluate, NEAT_MAX_GENERATION)
-
-                    # Save the winner.
-                    with open('winner', 'wb') as f:
-                        pickle.dump(winner, f)
-
-                    print(winner)
-
-                # neat load best
                 else:
-                    # load the winner
-                    with open('winner', 'rb') as f:
-                        c = pickle.load(f)
+                    neat_training = NeatTraining(NEAT_RUNS_PER_NET, NEAT_MAX_GEN, NEAT_MULTI)
 
-                    print('Loaded genome:')
-                    print(c)
+                    if NEAT_LOAD_WINNER:
+                        #neat_training.load_net(net_name="gen2_1068.048876452548_22h31m52s")
+                        neat_training.load_net(net_name=None)
+                    else:
+                        neat_training.train_it()
 
-                    # Load the config file, which is assumed to live in
-                    # the same directory as this script.
-                    local_dir = os.path.dirname(__file__)
-                    config_path = os.path.join(local_dir, 'config')
-                    config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
-                                         neat.DefaultSpeciesSet, neat.DefaultStagnation,
-                                         config_path)
-
-                    net = neat.nn.FeedForwardNetwork.create(c, config)
-
-                    neat_env = MayhemEnv(game_window, True, 1, mode="training", motion="gravity", sensor="ray", record_play="", play_recorded="")
-                    observation = neat_env.reset()
-
-                    done = False
-                    while not done:
-                        #action = net.activate(observation)
-                        action = np.argmax(net.activate(observation))
-
-                        observation, reward, done, info = neat_env.step(action, max_frame=100000)
-                        neat_env.display(collision_check=False)
-
-# -----------------------------------
-
-# Use the NN network phenotype and the discrete actuator force function.
-def eval_genome(genome, config):
-    runs_per_net = 1
-    net = neat.nn.FeedForwardNetwork.create(genome, config)
-
-    fitnesses = []
-
-    for runs in range(runs_per_net):
-
-        neat_env = MayhemEnv(game_window, False, 1, mode="training", motion="gravity", sensor="ray", record_play="", play_recorded="")
-        observation = neat_env.reset()
-
-        fitness = 0.0
-        done = False
-        while not done:
-
-            action = np.argmax(net.activate(observation))
-            #action = net.activate(observation) # [-1.0, -0.17934807670239852, 1.0, -0.3551236740213184]
-            #print(action)
-            observation, reward, done, info = neat_env.step(action, max_frame=3000)
+            # MLP
+            else:
+                pass
             
-            if not NEAT_MULTIPROCESS:
-                neat_env.display(collision_check=False)
-            #neat_env.display(collision_check=False)
-
-            #print(observation)
-
-            fitness += reward
-
-            #print(fitness)
-
-        fitnesses.append(fitness)
-
-
-    mean_fit = np.mean(fitnesses)
-    print(mean_fit)
-
-    return mean_fit
+# -------------------------------------------------------------------------------------------------
 
 if __name__ == '__main__':
     run()
